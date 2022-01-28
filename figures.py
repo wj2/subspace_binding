@@ -7,12 +7,15 @@ import scipy.io as sio
 import scipy.stats as sts
 import functools as ft
 import pickle
+import sklearn.linear_model as sklm
 
 import general.plotting as gpl
 import general.plotting_styles as gps
 import general.paper_utilities as pu
+import general.data_io as gio
 import general.utility as u
 import multiple_representations.analysis as mra
+import multiple_representations.auxiliary as mraux
 import multiple_representations.theory as mrt
 
 config_path = 'multiple_representations/figures.conf'
@@ -32,25 +35,36 @@ class MultipleRepFigure(pu.Figure):
             color_dict[k] = self.params.getcolor(k + '_color')
         return color_dict
             
-    # @property
-    # def monkeys(self):
-    #     return (self.params.get('monkey1'),
-    #             self.params.get('monkey2'))
-
+    def save_pickles(self, folder, suff='', ext='.mat'):
+        unsaved_keys = []
+        for key in self.panel_keys:
+            panel_data = self.data.get(key)
+            if panel_data is not None:
+                filename = key.split('_', 1)[1] + suff + ext
+                path = os.path.join(folder, filename)
+                sio.savemat(path, panel_data)
+            else:
+                unsaved_keys.append(key)
+        if len(unsaved_keys) > 0:
+            print('the following keys did not exist and were not '
+                  'saved:\n{}'.format(unsaved_keys))
     # @property
     # def monkey_colors(self):
     #     return self._make_color_dict(self.monkeys)
-
-    # @property
-    # def bhv_outcomes(self):
-    #     return (self.params.get('bhv_outcome1'),
-    #             self.params.get('bhv_outcome2'),
-    #             self.params.get('bhv_outcome3'))
-
-    # @property
-    # def bhv_colors(self):
-    #     return self._make_color_dict(self.bhv_outcomes)
     
+def _accumulate_time(pop, keepdim=True):
+    out = np.concatenate(list(pop[..., i] for i in range(pop.shape[-1])),
+                         axis=1)
+    if keepdim:
+        out = np.expand_dims(out, -1)
+    return out
+
+def _subsample_pops(*pops, samp_pops=10):
+    n_pops = pops[0].shape[0]
+    inds = np.random.default_rng().choice(n_pops, size=samp_pops, replace=False)
+    new_pops = list(pop_i[inds] for pop_i in pops)
+    return new_pops
+
 class DecodingFigure(MultipleRepFigure):
 
     def __init__(self, fig_key='decoding_figure', colors=colors, **kwargs):
@@ -91,7 +105,7 @@ class DecodingFigure(MultipleRepFigure):
 
     def get_experimental_data(self, force_reload=False):
         if self.data.get('experimental_data') is None or force_reload:
-            datapath = self.params.get('datapath')
+            data_folder = self.params.get('data_folder')
             data = gio.Dataset.from_readfunc(mraux.load_fine_data, data_folder)
             
             exclude_list = self.params.getlist('exclude_datasets')
@@ -99,38 +113,184 @@ class DecodingFigure(MultipleRepFigure):
             self.data['experimental_data'] = data.session_mask(session_mask)
         return self.data['experimental_data']
 
-    def _decoding_analysis(self, var, func, force_reload=False, **kwargs):
+    def _decoding_analysis(self, var, func, force_reload=True, **kwargs):
         tbeg = self.params.getint('tbeg')
         tend = self.params.getint('tend')
         winsize = self.params.getint('winsize')
         winstep = self.params.getint('winstep')
         prs = self.params.getint('resamples')
         pca_pre = self.params.getfloat('pca_pre')
-        time_acc = self.params.getbool('time_accumulate')
+        time_acc = self.params.getboolean('time_accumulate')
+        regions = self.params.getlist('use_regions')
 
         exper_data = self.get_experimental_data(force_reload=force_reload)
 
-        decoding_results = func(exper_data, tbeg, tend, var,
-                                winsize=winsize, dead_perc=None,
-                                pre_pca=pca_pre, pop_resamples=prs,
-                                tstep=winstep, time_accumulate=time_acc,
-                                **kwargs)
+        decoding_results = {}
+        for region in regions:
+            if region == 'all':
+                use_regions = None 
+            else:
+                use_regions = (region,)
+            out_r = func(exper_data, tbeg, tend, var,
+                         winsize=winsize, pre_pca=pca_pre,
+                         pop_resamples=prs, tstep=winstep,
+                         time_accumulate=time_acc,
+                         regions=use_regions, **kwargs)
+            decoding_results[region] = out_r            
+        return decoding_results
 
-    def prob_generalization(self, force_reload=False):
-        dead_perc = self.getfloat('exclude_middle_percentiles')
+    def _fit_linear_models(self, dec_dict, force_reload=False):
+        pca_pre = self.params.getfloat('pca_pre')
+        l1_ratio = self.params.getfloat('l1_ratio')
+        test_prop = self.params.getfloat('test_prop')
+        multi_task = self.params.getboolean('multi_task')
+        folds_n = self.params.getint('n_folds')
+        samp_pops = self.params.getint('linear_fit_pops')
+        model = sklm.ElasticNetCV
+        # model = sklm.ElasticNet
+        conds = ((-1, 1), (1, 1), (-1, -1), (1, -1))
+        lm_dict = {}
+        done_keys = []
+        for contrast, (_, _, p1, p2, p3, p4, _) in dec_dict.items():
+            if set(contrast) not in done_keys and p1.shape[1] > 0:
+                pops = list(_accumulate_time(p_i) for p_i in (p1, p2, p3, p4))
+                pops = _subsample_pops(*pops, samp_pops=samp_pops)
+                out = mra.fit_linear_models(pops, conds, folds_n=folds_n,
+                                            model=model, multi_task=multi_task,
+                                            l1_ratio=l1_ratio, pre_pca=pca_pre,
+                                            test_prop=test_prop, max_iter=10000)
+                lm, nlm, nv, r2 = out
+                out_dict = {'lm':lm, 'nlm':nlm, 'nv':nv, 'r2':r2,}
+                done_keys.append(set(contrast))
+                lm_dict[contrast] = out_dict
+        return lm_dict
+
+    def _model_terms(self, key, dec_key, force_recompute=False):
+        if (self.data.get(dec_key) is None and
+            self.data.get(key) is None):
+            self.panel_prob_generalization()
+        dec = self.data[dec_key]
+        if self.data.get(key) is None or force_recompute:
+            model_dict = {}
+            for region, dec_results in dec.items():
+                print(region)
+                out = self._fit_linear_models(dec_results)
+                model_dict[region] = out
+        self.data[key] = model_dict
+        return self.data[key]
+
+    def _model_predictions(self, term_key):
+        terms = self.data[term_key]
+        predictions = {}
+        for region, term_contrasts in terms.items():
+            predictions[region] = {}
+            for contrast, term_dict in term_contrasts.items():
+                lm = term_dict['lm']
+                nlm = term_dict['nlm']
+                nv = term_dict['nv']
+                r2 = term_dict['r2']
+                pred_out = mra.compute_ccgp_bin_prediction(lm, nlm, nv, r2=None)# r2)
+                pred_ccgp, pred_bind = pred_out[:2]
+                print(region, contrast, pred_ccgp, pred_bind)
+                predictions[region][contrast] = {'pred_ccgp':pred_ccgp,
+                                                 'pred_bind':pred_bind}
+        return predictions
+    
+    def panel_prob_model_prediction(self, force_refit=False,
+                                    force_recompute=False):
+        key = 'panel_prob_model_prediction'
+        term_key = 'prob_model_terms'
+        dec_key = 'prob_generalization'
+        if force_refit or (self.data.get(key) is None
+                           and self.data.get(term_key) is None):
+            self._model_terms(term_key, dec_key,
+                              force_recompute=force_refit)
+        if force_recompute or self.data.get(key) is None:
+            self.data[key] = self._model_predictions(term_key)
+        return self.data.get(key)
+
+    def panel_rwd_model_prediction(self, force_refit=False,
+                                   force_recompute=False):
+        key = 'panel_rwd_model_prediction'
+        term_key = 'rwd_model_terms'
+        dec_key = 'rwd_generalization'
+        if force_refit or (self.data.get(key) is None
+                           and self.data.get(term_key) is None):
+            self._model_terms(term_key, dec_key,
+                              force_recompute=force_recompute)
+        if force_recompute or self.data.get(key) is None:
+            self.data[key] = self._model_predictions(term_key)
+        return self.data.get(key)
+
+    def make_dec_save_dicts(self, keys=('prob_generalization',
+                                        'rwd_generalization'),
+                            loss=True, prefix='panel'):
+        for k in keys:
+            reg_dict = {}
+            if loss:
+                reform_func = mra.reformat_generalization_loss
+                new_key = prefix + '_loss_' + k
+            else:
+                reform_func = mra.reformat_dict
+                new_key = prefix + '_' + k
+            for region, data in self.data[k].items():
+                reg_dict[region] = reform_func(self.data[k][region])
+            self.data[new_key] = reg_dict
+
+    def prob_generalization(self, force_reload=False,
+                                  force_recompute=False):
+        key = 'prob_generalization'
+        dead_perc = self.params.getfloat('exclude_middle_percentiles')
         mask_func = lambda x: x < 1
-        if self.data.get('prob-gen') is None:
-            out = self._decoding_analysis('prob', force_reload=force_reload,
-                                          dead_perc=dead_perc, mask_func=mask_func)
-            self.data['prob-gen'] = out
-        return self.data['prob-gen']
+        min_trials = self.params.getint('min_trials_prob')
+        if self.data.get(key) is None or force_recompute:
+            out = self._decoding_analysis('prob', mra.compute_all_generalizations,
+                                          force_reload=force_reload,
+                                          dead_perc=dead_perc, mask_func=mask_func,
+                                          min_trials=min_trials)
+            self.data[key] = out
+        return self.data[key]
 
-    def rwd_generalization(self, force_reload=False):
-        if self.data.get('rwd-gen') is None:
-            out = self._decoding_analysis('rwd', force_reload=force_reload)
-            self.data['rwd-gen'] = out
-        return self.data['rwd-gen']
+    def rwd_generalization(self, force_reload=False,
+                                 force_recompute=False):
+        key = 'rwd_generalization'
+        dead_perc = None
+        min_trials = self.params.getint('min_trials_rwd')
+        if self.data.get(key) is None or force_recompute:
+            out = self._decoding_analysis('rwd', mra.compute_all_generalizations,
+                                          force_reload=force_reload,
+                                          dead_perc=dead_perc,
+                                          min_trials=min_trials)
+            self.data[key] = out
+        return self.data[key]
 
+    def _generic_dec_panel(self, key, func, *args, loss=False, **kwargs):
+        if self.data.get(key) is None:
+            func(*args, **kwargs)
+            key_i = key.split('_', 1)[1]
+            self.make_dec_save_dicts(keys=(key_i,), loss=loss)
+        return self.data[key]
+    
+    def panel_prob_generalization(self, *args, **kwargs):
+        key = 'panel_prob_generalization'
+        return self._generic_dec_panel(key, self.prob_generalization, *args,
+                                       **kwargs)
+
+    def panel_rwd_generalization(self, *args, **kwargs):
+        key = 'panel_rwd_generalization'
+        return self._generic_dec_panel(key, self.rwd_generalization, *args,
+                                       **kwargs)
+    
+    def panel_loss_prob_generalization(self, *args, **kwargs):
+        key = 'panel_prob_generalization'
+        return self._generic_dec_panel(key, self.prob_generalization,  *args,
+                                       loss=True, **kwargs)
+    
+    def panel_loss_rwd_generalization(self, *args, **kwargs):
+        key = 'panel_rwd_generalization'
+        return self._generic_dec_panel(key, self.rwd_generalization, *args, 
+                                       loss=True, **kwargs)
+    
 
 def _get_nonlinear_columns(coeffs):
     return _get_template_columns(coeffs, '.*\(nonlinear\)')
@@ -142,7 +302,19 @@ def _get_template_columns(coeffs, template):
     mask = np.array(list(re.match(template, col) is not None
                          for col in coeffs.columns))
     return np.array(coeffs)[:, mask]
-    
+
+def _get_rwd_lin(coeffs):
+    return _get_template_columns(coeffs, 'reward \(linear\)')
+
+def _get_prob_lin(coeffs):
+    return _get_template_columns(coeffs, 'prob \(linear\)')
+
+def _get_rwd_nonlin(coeffs):
+    return _get_template_columns(coeffs, 'rwd:.* \(nonlinear\)')
+
+def _get_prob_nonlin(coeffs):
+    return _get_template_columns(coeffs, 'prob:.* \(nonlinear\)')
+
 class TheoryFigure(MultipleRepFigure):
 
     def __init__(self, fig_key='theory_figure', colors=colors, **kwargs):
@@ -182,7 +354,8 @@ class TheoryFigure(MultipleRepFigure):
                 out_coeffs[method]['all'] = all_conc
             self.data['saved_coefficients'] = out_coeffs
         return self.data['saved_coefficients']
-                
+
+    
     def panel_coeff_prediction(self, force_recompute=False):
         key = 'panel_coeff_prediction'
         coeffs = self.get_coeffs(force_reload=force_recompute)
@@ -191,19 +364,24 @@ class TheoryFigure(MultipleRepFigure):
             for method, coeffs_m in coeffs.items():
                 out_prediction[method] = {}
                 for region, cs in coeffs_m.items():
-                    lin = _get_linear_columns(cs)
-                    nonlin = _get_nonlinear_columns(cs)
+                    rwd_lin = _get_rwd_lin(cs)
+                    prob_lin = _get_prob_lin(cs)
+                    rwd_nonlin = _get_rwd_nonlin(cs)
+                    prob_nonlin = _get_prob_nonlin(cs)
                     r2 = _get_template_columns(cs, 'pseudoR2')
                     if r2.shape[1] > 0:
                         resid_var = 1 - r2
                     else:
                         resid_var = np.expand_dims(1, (0, 1))
-                    out = mra.predict_ccgp_binding_noformat(lin, nonlin,
-                                                            resid_var,
-                                                            n=2)
-                    bind_avg, gen_avg = out
-                    out_prediction[method][region] = {'bind_err':bind_avg,
-                                                      'gen_err':gen_avg}
+                    rwd_out = mra.predict_asymp_dists(
+                        rwd_lin, rwd_nonlin, resid_var, k=2, n=2)
+                    prob_out = mra.predict_asymp_dists(
+                        prob_lin, prob_nonlin, resid_var, k=2, n=2)
+                    rwd = {'bind_err':rwd_out[0], 'gen_err':rwd_out[1]}
+                    prob = {'bind_err':prob_out[0], 'gen_err':prob_out[1]}
+                    
+                    out_prediction[method][region] = {'rwd':rwd,
+                                                      'prob':prob}
             self.data[key] = out_prediction
         return self.data[key]
 
@@ -282,10 +460,4 @@ class TheoryFigure(MultipleRepFigure):
             self.data[key] = {'probed_pwrs':pwrs, 'out':out_arrs}
         return self.data[key]
             
-    def save_pickles(self, folder, suff='', ext='.mat'):
-        for key in self.panel_keys:
-            panel_data = self.data[key]
-            filename = key.split('_', 1)[1] + suff + ext
-            path = os.path.join(folder, filename)
-            sio.savemat(path, panel_data)
             

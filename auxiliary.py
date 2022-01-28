@@ -16,9 +16,7 @@ bhv_fields_rename = {'trials.included':'include',
 def load_justin_betas(path, region='OFC', key='OLS', key_top='ALL_BETA',
                       bottom_key='betas'):
     coefs = sio.loadmat(path)[key_top]
-    print(coefs)
     coefs = coefs[key][0, 0][region][0, 0][bottom_key][0, 0]
-    print(coefs['arr'])
     return coefs
 
 def split_spks_bhv(ids, ts, beg_ts, end_ts, extra):
@@ -80,13 +78,25 @@ def load_steinmetz_data(folder, bhv_fields=bhv_fields_rename,
                       data=datas, n_neurs=n_neurs)
     return super_dict
 
-def _add_data_vars(sd, trls, var_names, check=True):
+rwd_conversion = {0.15:1., 0.18:2., 0.21:3.}
+def _add_data_vars(sd, trls, var_names, check=True,
+                   rwd_conversion=rwd_conversion):
+    if check:
+        all_trls = np.stack(list(t[0, 0][0] for t in trls[:, 0]),
+                            axis=0)
+        all_trls[np.isnan(all_trls)] = -1000
+        if not np.all(all_trls == all_trls):
+            mask = np.logical_not(all_trls[0:1] == all_trls)
+            ind = np.where(mask)
+            print(var_names[ind[-1]])
+            print(all_trls.shape)
+            print(all_trls[mask].shape)
+            print(all_trls[mask])
+        # assert np.all(all_trls[0:1] == all_trls)
     for i, vn in enumerate(var_names):
-        if check:
-            all_trls = np.stack(list(t[0, 0][0] for t in trls[:, 0]),
-                                axis=0)
-            assert np.all(all_trls[0:1] == all_trls)
         vn_vals = trls[0, 0][0, 0][0][:, i]
+        if vn[0].split(' ')[0] == 'rwd' and vn_vals[0] < 1:
+            vn_vals = np.array(list(rwd_conversion[vn_i] for vn_i in vn_vals))
         sd[vn[0]] = vn_vals
     return sd
 
@@ -125,11 +135,28 @@ def _make_convenience_data_vars(sd, offer1_side=offer1_side_field,
                                      new_fields[i], split_keys=split_keys)
     return sd
 
-def load_fine_data(folder, regions_list=('OFC', 'PCC', 'rOFC'),
+def _infer_sessions(trl_nums):
+    masks = []
+    tnum = trl_nums[0]
+    curr_mask = [0]
+    for i in range(1, len(trl_nums)):
+        tnum = trl_nums[i]
+        if tnum == trl_nums[curr_mask[-1]]:
+            curr_mask.append(i)
+        else:
+            masks.append(curr_mask)
+            curr_mask = [i]
+    masks.append(curr_mask)
+    binary_masks = np.zeros((len(masks), len(trl_nums)), dtype=bool)
+    for i, mask in enumerate(masks):
+        binary_masks[i, mask] = True
+    return masks
+
+def load_fine_data(folder, regions_list=('OFC', 'PCC', 'pgACC', 'vmPFC', 'VS'),
                    tv_templ='TrialInfo/{}_Trial_Vars.mat',
                    psth_templ='Neural/{}_psth_rebinned_20ms_original.mat',
                    tv_key='Trial_Vars', psth_key='data',
-                   sub_key='subj_ID', vn_key='VarNames',
+                   sub_key='subj_ID', vn_key='Variable_Names',
                    timing_file='event_time_info.mat'):
     dates = []
     animals = []
@@ -150,34 +177,43 @@ def load_fine_data(folder, regions_list=('OFC', 'PCC', 'rOFC'),
         for i, an in enumerate(animal_names):
             psth_ij = psth[an][0, 0]
             trls_ij = trls[an][0, 0]
-            trl_nums = np.array(list(pij[0]['psth'][0, 0].shape[0]
+            trl_nums = np.array(list(pij[0][0, 0][0].shape[0]
+                                     for pij in trls_ij))
+            psth_trl_nums = np.array(list(pij[0]['psth'][0, 0].shape[0]
                                      for pij in psth_ij))
-            for k, tn_u in enumerate(np.unique(trl_nums)):
-                mask = trl_nums == tn_u
-                session_dict = {}
-                regions.append(region)
-                animals.append(an)
-                psth_timings.append(psth_time_vec)
-                dates.append('{}-{}-{}'.format(region, an, tn_u))
+            session_masks = _infer_sessions(psth_trl_nums)
+            # session_masks = np.identity(len(psth_trl_nums)).astype(bool)
+            assert np.all(trl_nums == psth_trl_nums)
+            for k, mask in enumerate(session_masks):
+                tn_u = trl_nums[mask][0]
+                session_dict = {} 
+                try:
                 
-                pop = np.stack(list(pij[0]['psth'][0, 0]
-                                    for pij in psth_ij[mask]),
-                               axis=1)
-                n_neurs.append(pop.shape[1])
-                session_dict['neur_regions'] = ((region,)*pop.shape[1],)*pop.shape[0]
-                session_dict['psth'] = list(pop)
-                session_dict = _add_data_vars(session_dict, trls_ij[mask],
-                                              var_names)
-                timing_dict = {ename[0]:np.ones(len(pop))*etime[0, 0]
-                               for (ename, etime) in event_times}
-                session_dict.update(timing_dict)
-                session_dict = _make_convenience_data_vars(session_dict)
-                session_dict = _make_convenience_data_vars(
-                    session_dict, offer1_side=chosen_offer_field,
-                    split_keys=('chosen', 'unchosen'))
+                    pop = np.stack(list(pij[0]['psth'][0, 0]
+                                        for pij in psth_ij[mask]),
+                                   axis=1)
+                    session_dict['neur_regions'] = ((region,)*pop.shape[1],)*pop.shape[0]
+                    session_dict['psth'] = list(pop)
+                    session_dict = _add_data_vars(session_dict, trls_ij[mask],
+                                                  var_names)
+                    timing_dict = {ename[0]:np.ones(len(pop))*etime[0, 0]
+                                   for (ename, etime) in event_times}
+                    session_dict.update(timing_dict)
+                    session_dict = _make_convenience_data_vars(session_dict)
+                    session_dict = _make_convenience_data_vars(
+                        session_dict, offer1_side=chosen_offer_field,
+                        split_keys=('chosen', 'unchosen'))
                 
-                session_frame = pd.DataFrame.from_dict(session_dict)
-                datas.append(session_frame)
+                    session_frame = pd.DataFrame.from_dict(session_dict)
+
+                    n_neurs.append(pop.shape[1])
+                    datas.append(session_frame)
+                    regions.append(region)
+                    animals.append(an)
+                    psth_timings.append(psth_time_vec)
+                    dates.append('{}-{}-{}'.format(region, an, tn_u))
+                except AssertionError:
+                    print(region, an, trl_nums[mask], 'failed')
     super_dict = dict(date=dates, animal=animals, data=datas, n_neurs=n_neurs,
                       psth_timing=psth_timings)
     return super_dict

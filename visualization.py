@@ -24,7 +24,6 @@ def plot_all_gen(gen_dict, axs=None, fwid=4, upsampled=False):
         except:
             var, dec_cond = key[0].split(' ', 1)
             var, gen_cond = key[1].split(' ', 1)
-        print(xs.shape, dec.shape, gen.shape)
         plot_decoding_gen(xs, dec, gen, var, dec_cond=dec_cond,
                           gen_cond=gen_cond, ax=axs[i], upsampled=upsampled)
     return axs

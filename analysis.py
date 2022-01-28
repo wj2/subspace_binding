@@ -7,6 +7,7 @@ import sklearn.linear_model as sklm
 import sklearn.svm as skc
 import sklearn.model_selection as skms
 import sklearn.metrics as skm
+import scipy.stats as sts
 
 import general.utility as u
 import general.neural_analysis as na
@@ -149,6 +150,7 @@ def compute_ccgp_bin_prediction(lm, nlm, nv, r2=None, multi_task=False):
     ccgp_all = []
     bin_err_all = []
     if r2 is not None and not multi_task:
+        # maybe average r2 before excluding
         r2_mask = r2 > 0
         lm_rep = np.zeros_like(lm)
         r2_mask_lm = np.stack((r2_mask,)*lm.shape[3], axis=3)
@@ -161,6 +163,12 @@ def compute_ccgp_bin_prediction(lm, nlm, nv, r2=None, multi_task=False):
     for pop_ind in range(lm.shape[0]):
         bin_err, ccgp_err = predict_ccgp_binding(lm[pop_ind], nlm[pop_ind],
                                                  nv_avg[pop_ind])
+        lm_red = np.squeeze(lm[pop_ind])[:, 0:1]
+        lm_red = np.squeeze(np.mean(lm[pop_ind], axis=0))[:, 0:1]
+        nlm_red = np.squeeze(np.mean(nlm[pop_ind], axis=0))
+        bin_err, ccgp_err = predict_asymp_dists(lm_red, nlm_red,
+                                                nv_avg[pop_ind])
+
         ccgp_all.append(1 - ccgp_err)
         bin_err_all.append(1 - bin_err)
     ccgp = np.stack(ccgp_all, axis=0)
@@ -423,24 +431,24 @@ def binding_analysis(data, tbeg, tend, feat1, feat2,
 def generalization_analysis(data, tbeg, tend, dec_field, gen_field,
                             dead_perc=30, winsize=500, tstep=20,
                             pop_resamples=20, kernel='linear',
-                            dec_tzf='offer_left_on',
-                            gen_tzf='offer_right_on',
+                            f1_tzf='offer_left_on',
+                            f2_tzf='offer_right_on',
                             min_trials=160, pre_pca=None,
                             shuffle_trials=True, c1_targ=2,
-                            c2_targ=3, dec_mask=None, gen_mask=None,
+                            c2_targ=3, f1_mask=None, f2_mask=None,
                             use_split_dec='prob_chosen',
                             **kwargs):
     out = _compute_masks(data, dec_field, gen_field, dead_perc=dead_perc,
-                         use_split_dec=use_split_dec, dec_mask=dec_mask,
-                         gen_mask=gen_mask, c1_targ=c1_targ, c2_targ=c2_targ)
+                         use_split_dec=use_split_dec, dec_mask=f1_mask,
+                         gen_mask=f2_mask, c1_targ=c1_targ, c2_targ=c2_targ)
     mask_c1, mask_c2, gen_mask_c1, gen_mask_c2 = out
     
     out = data.decode_masks(mask_c1, mask_c2, winsize, tbeg, tend, tstep, 
-                            pseudo=True, time_zero_field=dec_tzf,
+                            pseudo=True, time_zero_field=f1_tzf,
                             min_trials_pseudo=min_trials,
                             resample_pseudo=pop_resamples, ret_pops=True, 
                             shuffle_trials=shuffle_trials, pre_pca=pre_pca,
-                            decode_tzf=gen_tzf, decode_m1=gen_mask_c1, 
+                            decode_tzf=f2_tzf, decode_m1=gen_mask_c1, 
                             decode_m2=gen_mask_c2, **kwargs)
     return out
     
@@ -466,23 +474,45 @@ def discretize_classifier_gen(pops_tr, rts_tr, pops_te, rts_te,
     return regression_gen(pops_tr, new_rts_tr, pops_te, new_rts_te,
                           model=model, **kwargs)
 
-def generalization_loss(out_dict, t_ind=-1):
+def reformat_dict(out_dict, keep_inds=(0, 1, -1),
+                  keep_labels=('dec', 'xs', 'gen'),
+                  save_dict=True, str_key=True):
+    new_dict = {}
+    for (dec, gen), val in out_dict.items():
+        if save_dict:
+            sub_item = {}
+            for i, keep_ind in enumerate(keep_inds):
+                sub_item[keep_labels[i]] = val[keep_ind]
+        else:
+            sub_item = []
+            for i, keep_ind in enumerate(keep_inds):
+                sub_item.append(val[keep_ind])
+        if str_key:
+            nk = '-'.join((dec, gen))
+        else:
+            nk = (dec, gen)
+        new_dict[nk] = sub_item
+    return new_dict
+
+def reformat_generalization_loss(out_dict, save_dict=True):
     loss_dict = {}
     for (dec, gen), val in out_dict.items():
         p, g = val[0], val[-1]
         val_flip = out_dict[(gen, dec)]
         p_flip, g_flip = val_flip[0], val_flip[-1]
         xs = val_flip[1]
-        loss_dict[dec] = (p, xs, g_flip)
-    return loss_dict, xs
+        if save_dict:
+            loss_dict[dec] = {'dec':p, 'xs':xs, 'gen':g_flip}
+        else:
+            loss_dict[dec] = (p, xs, g_flip)
+    return loss_dict
 
 default_suffixes = (('_chosen', '_unchosen'), ('_left', '_right'),
                     (' offer 1', ' offer 2'))
 default_timing = (('offer_chosen_on', 'offer_unchosen_on'),
                   ('offer_left_on', 'offer_right_on'),
                   ('Offer 1 on', 'Offer 2 on'))
-def _compute_all_funcs(data, tbeg, tend, dec_var,
-                       func,
+def _compute_all_funcs(data, tbeg, tend, dec_var, func,
                        suffixes=default_suffixes,
                        timing=default_timing, mask_func=None,
                        compute_reverse=True, **kwargs):
@@ -501,12 +531,12 @@ def _compute_all_funcs(data, tbeg, tend, dec_var,
         print(gen_field, gen_tzf)
         out = func(data, tbeg, tend, dec_field, gen_field,
                    f1_mask=dec_mask, f2_mask=gen_mask,
-                   f1_tzf=dec_tzf, f2_tzf=gen_tzf,**kwargs)
+                   f1_tzf=dec_tzf, f2_tzf=gen_tzf, **kwargs)
         out_dict[(dec_field, gen_field)] = out
         if compute_reverse:
             out = func(data, tbeg, tend, gen_field, dec_field,
                        f1_mask=gen_mask, f2_mask=dec_mask,
-                       f1_tzf=gen_tzf, f2_tzf=dec_tzf,**kwargs)
+                       f1_tzf=gen_tzf, f2_tzf=dec_tzf, **kwargs)
             out_dict[(gen_field, dec_field)] = out
     return out_dict  
 
@@ -588,6 +618,7 @@ def fit_linear_models(pops, conds, model=sklm.MultiTaskElasticNetCV, norm=True,
     lin_full = lin_full/np.sqrt(np.mean(np.sum(lin_full**2, axis=1)))
     nonlin_full = np.concatenate(nonlin_conds, axis=0)
     nonlin_full = nonlin_full/np.sqrt(np.mean(np.sum(nonlin_full**2, axis=1)))
+
     cond_full = np.concatenate((lin_full, nonlin_full), axis=1)
     lin_mats = np.zeros((pops_full.shape[0], folds_n, pops_full.shape[1],
                          lin_full.shape[1],
@@ -611,6 +642,7 @@ def fit_linear_models(pops, conds, model=sklm.MultiTaskElasticNetCV, norm=True,
         splitter = rand_splitter(folds_n, test_size=test_prop)
         internal_splitter = rand_splitter(folds_n, test_size=test_prop)
     m = model(fit_intercept=False, cv=internal_splitter, **model_kwargs)
+    # m = model(fit_intercept=False,  **model_kwargs)
     for i, pop in enumerate(pops_full):
         for j in range(pops_full.shape[-1]):
             out = _estimate_params(pops_full[i, :, 0, :, j].T,
@@ -623,12 +655,31 @@ def fit_linear_models(pops, conds, model=sklm.MultiTaskElasticNetCV, norm=True,
             r2[i, ..., j] = r2_ij
     return lin_mats, nonlin_mats, resid, r2
 
-def predict_ccgp_binding_noformat(lm, nlm, resid_var=None, n=2, n_stim=2):
+def predict_asymp_dists(lm, nm, sigma, k=None, n=2, n_stim=2):
+    d_ll = np.sqrt(np.mean(np.nansum((lm/sigma)**2, axis=0)))
+    d_n =  np.sqrt(np.mean(np.nansum((nm/sigma)**2, axis=0)))
+    f3 = -(d_ll**2)/(2*np.sqrt(d_ll**2 + d_n**2))
+    # print(d_ll.shape, d_n.shape, sigma.shape, f3.shape)
+    gen = sts.norm(0, 1).cdf(f3)
+    if k is None:
+        k = lm.shape[1] + 1
+        
+    pwrs = d_ll**2 + d_n**2
+    t = (d_ll**2)/pwrs
+    arg_pwr = np.array([np.sqrt(pwrs)])
+    err_types = mrt.get_ccgp_error_tradeoff_theory(arg_pwr, k, n,
+                                                   n_stim, t)
+    bind = err_types[2][-1]
+    return bind, gen
+
+def predict_ccgp_binding_noformat(lm, nlm, resid_var=None, n=2, k=None,
+                                  n_stim=2):
     if resid_var is None:
         resid_var = 1
     lin_pwr = np.mean(np.sum((lm/resid_var)**2, axis=0))
     nonlin_pwr = np.mean(np.sum((nlm/resid_var)**2, axis=0))
-    k = lm.shape[1]
+    if k is None:
+        k = lm.shape[1]
     pwr = lin_pwr + nonlin_pwr
     t = lin_pwr / pwr
     pwr_s = np.sqrt(pwr)
@@ -649,7 +700,7 @@ def predict_ccgp_binding(lm, nlm, resid_var, n=2, n_stim=2):
 
     k = lm.shape[3]
     pwr = lin_pwr + nonlin_pwr
-    print(lin_pwr, nonlin_pwr)
+    # print(lin_pwr, nonlin_pwr)
     t = lin_pwr / pwr
     pwr_s = np.sqrt(pwr)
     out = mrt.get_ccgp_error_tradeoff_theory(pwr_s, k, n, n_stim, t)
