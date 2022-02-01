@@ -146,26 +146,31 @@ def predict_ccgp(pop_list, cond_list=default_cond_list,
     return compute_ccgp_bin_prediction(lm, nlm, nv, r2, multi_task=multi_task)
 
 def compute_ccgp_bin_prediction(lm, nlm, nv, r2=None, multi_task=False):
-    nv_avg = np.nanmean(nv, axis=1)
     ccgp_all = []
     bin_err_all = []
+    # print(r2.shape)
+    # print(lm.shape)
+    # lm_noise = lm/nv
+    # nlm_noise = nlm/nv
+    lm = np.mean(lm, axis=1)
+    nlm = np.mean(nlm, axis=1)
+    nv_avg = np.mean(np.sqrt(nv), axis=1)
     if r2 is not None and not multi_task:
-        # maybe average r2 before excluding
+        r2 = np.mean(r2, axis=1)
         r2_mask = r2 > 0
         lm_rep = np.zeros_like(lm)
-        r2_mask_lm = np.stack((r2_mask,)*lm.shape[3], axis=3)
+        r2_mask_lm = np.stack((r2_mask,)*lm.shape[2], axis=2)
         lm_rep[r2_mask_lm] = lm[r2_mask_lm]
         nlm_rep = np.zeros_like(nlm) 
-        r2_mask_nlm = np.stack((r2_mask,)*nlm.shape[3], axis=3)
+        r2_mask_nlm = np.stack((r2_mask,)*nlm.shape[2], axis=2)
         nlm_rep[r2_mask_nlm] = nlm[r2_mask_nlm]
         lm = lm_rep
         nlm = nlm_rep
     for pop_ind in range(lm.shape[0]):
-        bin_err, ccgp_err = predict_ccgp_binding(lm[pop_ind], nlm[pop_ind],
-                                                 nv_avg[pop_ind])
+        # bin_err, ccgp_err = predict_ccgp_binding(lm[pop_ind], nlm[pop_ind],
+        #                                          nv_avg[pop_ind])
         lm_red = np.squeeze(lm[pop_ind])[:, 0:1]
-        lm_red = np.squeeze(np.mean(lm[pop_ind], axis=0))[:, 0:1]
-        nlm_red = np.squeeze(np.mean(nlm[pop_ind], axis=0))
+        nlm_red = np.squeeze(nlm[pop_ind])
         bin_err, ccgp_err = predict_asymp_dists(lm_red, nlm_red,
                                                 nv_avg[pop_ind])
 
@@ -602,7 +607,7 @@ rand_splitter = skms.ShuffleSplit
 def fit_linear_models(pops, conds, model=sklm.MultiTaskElasticNetCV, norm=True,
                       pca=None, rand_splitter=rand_splitter, test_prop=None,
                       folds_n=20, shuffle=False, pre_pca=None, multi_task=True,
-                      **model_kwargs):
+                      internal_cv=True, **model_kwargs):
     """ conds is the same length as pops, and gives the feature values """
     if test_prop is None:
         test_prop = 1/folds_n
@@ -641,8 +646,10 @@ def fit_linear_models(pops, conds, model=sklm.MultiTaskElasticNetCV, norm=True,
     else:
         splitter = rand_splitter(folds_n, test_size=test_prop)
         internal_splitter = rand_splitter(folds_n, test_size=test_prop)
-    m = model(fit_intercept=False, cv=internal_splitter, **model_kwargs)
-    # m = model(fit_intercept=False,  **model_kwargs)
+    if internal_cv:
+        m = model(fit_intercept=False, cv=internal_splitter, **model_kwargs)
+    else:
+        m = model(fit_intercept=False,  **model_kwargs)
     for i, pop in enumerate(pops_full):
         for j in range(pops_full.shape[-1]):
             out = _estimate_params(pops_full[i, :, 0, :, j].T,
@@ -655,18 +662,25 @@ def fit_linear_models(pops, conds, model=sklm.MultiTaskElasticNetCV, norm=True,
             r2[i, ..., j] = r2_ij
     return lin_mats, nonlin_mats, resid, r2
 
+
 def predict_asymp_dists(lm, nm, sigma, k=None, n=2, n_stim=2):
-    d_ll = np.sqrt(np.mean(np.nansum((lm/sigma)**2, axis=0)))
-    d_n =  np.sqrt(np.mean(np.nansum((nm/sigma)**2, axis=0)))
+    if len(lm.shape) == 2:
+        lm = np.expand_dims(lm, -1)
+    if len(nm.shape) == 2:
+        nm = np.expand_dims(nm, -1)
+    if len(sigma.shape) == 2:
+        sigma = np.expand_dims(sigma, -1)
+    
+    d_ll = np.sqrt(np.mean(np.nansum((lm/sigma)**2, axis=0), axis=0))
+    d_n =  np.sqrt(np.mean(np.nansum((nm/sigma)**2, axis=0), axis=0))
     f3 = -(d_ll**2)/(2*np.sqrt(d_ll**2 + d_n**2))
-    # print(d_ll.shape, d_n.shape, sigma.shape, f3.shape)
     gen = sts.norm(0, 1).cdf(f3)
     if k is None:
         k = lm.shape[1] + 1
         
     pwrs = d_ll**2 + d_n**2
     t = (d_ll**2)/pwrs
-    arg_pwr = np.array([np.sqrt(pwrs)])
+    arg_pwr = np.sqrt(pwrs)
     err_types = mrt.get_ccgp_error_tradeoff_theory(arg_pwr, k, n,
                                                    n_stim, t)
     bind = err_types[2][-1]

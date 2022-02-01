@@ -7,7 +7,7 @@ import functools as ft
 import general.plotting as gpl
 import composite_tangling.code_analysis as ca
 
-def plot_all_gen(gen_dict, axs=None, fwid=4, upsampled=False):
+def plot_all_gen(gen_dict, axs=None, fwid=4, upsampled=False, prediction=None):
     n_plots = len(gen_dict) 
     if axs is None:
         f, axs = plt.subplots(n_plots, 1, figsize=(fwid, fwid*n_plots),
@@ -24,8 +24,17 @@ def plot_all_gen(gen_dict, axs=None, fwid=4, upsampled=False):
         except:
             var, dec_cond = key[0].split(' ', 1)
             var, gen_cond = key[1].split(' ', 1)
+        if prediction is not None:
+            pred = prediction.get(key)
+            if pred is None:
+                pred = prediction.get(key[::-1])
+            pred_ccgp = np.mean(pred['pred_ccgp'], axis=1)
+            
+        else:
+            pred_ccgp = None
         plot_decoding_gen(xs, dec, gen, var, dec_cond=dec_cond,
-                          gen_cond=gen_cond, ax=axs[i], upsampled=upsampled)
+                          gen_cond=gen_cond, ax=axs[i], upsampled=upsampled,
+                          pred_ccgp=pred_ccgp)
     return axs
 
 @gpl.ax_adder
@@ -90,6 +99,7 @@ def plot_decoding_gen(xs, dec, dec_gen, factor='', ax=None,
     gpl.plot_trace_werr(xs, plot_dec_gen, error_func=error_func, ax=ax, 
                         label=gen_label)
     if pred_ccgp is not None:
+        pred_ccgp = np.stack((pred_ccgp,)*len(xs), axis=1)
         gpl.plot_trace_werr(xs, pred_ccgp, conf95=True, ax=ax, 
                             label=pred_label)
     gpl.add_hlines(0.5, ax)

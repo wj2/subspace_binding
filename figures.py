@@ -8,15 +8,19 @@ import scipy.stats as sts
 import functools as ft
 import pickle
 import sklearn.linear_model as sklm
+import sklearn.model_selection as skms
 
 import general.plotting as gpl
 import general.plotting_styles as gps
 import general.paper_utilities as pu
 import general.data_io as gio
 import general.utility as u
+import general.neural_analysis as na
 import multiple_representations.analysis as mra
 import multiple_representations.auxiliary as mraux
 import multiple_representations.theory as mrt
+import multiple_representations.visualization as mrv
+import multiple_representations.direct_theory as mrdt
 
 config_path = 'multiple_representations/figures.conf'
 
@@ -52,9 +56,9 @@ class MultipleRepFigure(pu.Figure):
     # def monkey_colors(self):
     #     return self._make_color_dict(self.monkeys)
     
-def _accumulate_time(pop, keepdim=True):
+def _accumulate_time(pop, keepdim=True, ax=1):
     out = np.concatenate(list(pop[..., i] for i in range(pop.shape[-1])),
-                         axis=1)
+                         axis=ax)
     if keepdim:
         out = np.expand_dims(out, -1)
     return out
@@ -146,8 +150,11 @@ class DecodingFigure(MultipleRepFigure):
         multi_task = self.params.getboolean('multi_task')
         folds_n = self.params.getint('n_folds')
         samp_pops = self.params.getint('linear_fit_pops')
-        model = sklm.ElasticNetCV
-        # model = sklm.ElasticNet
+        internal_cv = self.params.getboolean('internal_cv')
+        if internal_cv:
+            model = sklm.ElasticNetCV
+        else:
+            model = sklm.ElasticNet
         conds = ((-1, 1), (1, 1), (-1, -1), (1, -1))
         lm_dict = {}
         done_keys = []
@@ -158,7 +165,8 @@ class DecodingFigure(MultipleRepFigure):
                 out = mra.fit_linear_models(pops, conds, folds_n=folds_n,
                                             model=model, multi_task=multi_task,
                                             l1_ratio=l1_ratio, pre_pca=pca_pre,
-                                            test_prop=test_prop, max_iter=10000)
+                                            test_prop=test_prop, max_iter=10000,
+                                            internal_cv=internal_cv)
                 lm, nlm, nv, r2 = out
                 out_dict = {'lm':lm, 'nlm':nlm, 'nv':nv, 'r2':r2,}
                 done_keys.append(set(contrast))
@@ -170,12 +178,13 @@ class DecodingFigure(MultipleRepFigure):
             self.data.get(key) is None):
             self.panel_prob_generalization()
         dec = self.data[dec_key]
+        use_regions = self.params.getlist('use_regions')
         if self.data.get(key) is None or force_recompute:
             model_dict = {}
             for region, dec_results in dec.items():
-                print(region)
-                out = self._fit_linear_models(dec_results)
-                model_dict[region] = out
+                if region in use_regions:
+                    out = self._fit_linear_models(dec_results)
+                    model_dict[region] = out
         self.data[key] = model_dict
         return self.data[key]
 
@@ -189,12 +198,42 @@ class DecodingFigure(MultipleRepFigure):
                 nlm = term_dict['nlm']
                 nv = term_dict['nv']
                 r2 = term_dict['r2']
-                pred_out = mra.compute_ccgp_bin_prediction(lm, nlm, nv, r2=None)# r2)
+                pred_out = mra.compute_ccgp_bin_prediction(lm, nlm, nv, ) # r2=r2)
                 pred_ccgp, pred_bind = pred_out[:2]
-                print(region, contrast, pred_ccgp, pred_bind)
-                predictions[region][contrast] = {'pred_ccgp':pred_ccgp,
-                                                 'pred_bind':pred_bind}
+                ret_dict = {'pred_ccgp':np.squeeze(pred_ccgp),
+                            'pred_bind':np.squeeze(pred_bind)}
+                predictions[region][contrast] = ret_dict
         return predictions
+
+    def _direct_predictions(self, dec_key):
+        decs = self.data.get(dec_key)
+        use_regions = self.params.getlist('use_regions')
+        model_dict = {}
+        for region, dec_results in decs.items():
+            if region in use_regions:
+                model_dict[region] = {}
+                for contrast, out in dec_results.items():
+                    _, _, p1, p2, p3, p4, _ = out
+                    out = mrdt.direct_ccgp_bind_est_pops(
+                        (p1, p2), (p3, p4))
+                    out_dict = {'pred_ccgp':1 - out[1],
+                                'pred_bin':1 - out[0]}
+                    model_dict[region][contrast] = out_dict
+        return model_dict
+                    
+    def panel_rwd_direct_predictions(self, force_refit=False):
+        key = 'panel_rwd_direct_predictions'
+        dec_key = 'rwd_generalization'
+        if self.data.get(key) is None or force_refit:
+            self.data[key] = self._direct_predictions(dec_key)
+        return self.data[key]
+                                     
+    def panel_prob_direct_predictions(self, force_refit=False):
+        key = 'panel_prob_direct_predictions'
+        dec_key = 'prob_generalization'
+        if self.data.get(key) is None or force_refit:
+            self.data[key] = self._direct_predictions(dec_key)
+        return self.data[key]
     
     def panel_prob_model_prediction(self, force_refit=False,
                                     force_recompute=False):
@@ -217,7 +256,7 @@ class DecodingFigure(MultipleRepFigure):
         if force_refit or (self.data.get(key) is None
                            and self.data.get(term_key) is None):
             self._model_terms(term_key, dec_key,
-                              force_recompute=force_recompute)
+                              force_recompute=force_refit)
         if force_recompute or self.data.get(key) is None:
             self.data[key] = self._model_predictions(term_key)
         return self.data.get(key)
@@ -264,12 +303,35 @@ class DecodingFigure(MultipleRepFigure):
             self.data[key] = out
         return self.data[key]
 
-    def _generic_dec_panel(self, key, func, *args, loss=False, **kwargs):
+    def _generic_dec_panel(self, key, func, *args, dec_key=None, loss=False,
+                           **kwargs):
         if self.data.get(key) is None:
             func(*args, **kwargs)
             key_i = key.split('_', 1)[1]
             self.make_dec_save_dicts(keys=(key_i,), loss=loss)
         return self.data[key]
+
+    def _plot_gen_results(self, dec_key, theory_key):
+        dec_gen = self.data.get(dec_key)
+        dec_gen_theory = self.data.get(theory_key)
+        if dec_gen is not None:
+            for region, dec_res in dec_gen.items():
+                if dec_gen_theory is not None:
+                    pred_dict = dec_gen_theory.get(region)
+                else:
+                    pred_dict = None
+                axs = mrv.plot_all_gen(dec_res, prediction=pred_dict)
+                axs[0].set_title(region)
+        
+    def plot_all_prob_generalization(self):
+        dec_gen_key = 'prob_generalization'
+        dec_gen_theory_key = 'panel_prob_direct_predictions'
+        return self._plot_gen_results(dec_gen_key, dec_gen_theory_key)
+
+    def plot_all_rwd_generalization(self):
+        dec_gen_key = 'rwd_generalization'
+        dec_gen_theory_key = 'panel_rwd_direct_predictions'
+        return self._plot_gen_results(dec_gen_key, dec_gen_theory_key)
     
     def panel_prob_generalization(self, *args, **kwargs):
         key = 'panel_prob_generalization'
@@ -282,14 +344,20 @@ class DecodingFigure(MultipleRepFigure):
                                        **kwargs)
     
     def panel_loss_prob_generalization(self, *args, **kwargs):
-        key = 'panel_prob_generalization'
-        return self._generic_dec_panel(key, self.prob_generalization,  *args,
-                                       loss=True, **kwargs)
+        key = 'panel_loss_prob_generalization'
+        dec_key = 'prob_generalization'
+        if self.data.get(dec_key) is None:
+            self.panel_prob_generalization(*args, **kwargs)
+        self.make_dec_save_dicts(keys=(dec_key,), loss=True)
+        return self.data[key]
     
     def panel_loss_rwd_generalization(self, *args, **kwargs):
-        key = 'panel_rwd_generalization'
-        return self._generic_dec_panel(key, self.rwd_generalization, *args, 
-                                       loss=True, **kwargs)
+        key = 'panel_loss_rwd_generalization'
+        dec_key = 'rwd_generalization'
+        if self.data.get(dec_key) is None:
+            self.panel_prob_generalization(*args, **kwargs)
+        self.make_dec_save_dicts(keys=(dec_key,), loss=True)
+        return self.data[key]
     
 
 def _get_nonlinear_columns(coeffs):
@@ -298,9 +366,9 @@ def _get_nonlinear_columns(coeffs):
 def _get_linear_columns(coeffs):
     return _get_template_columns(coeffs, '.*\(linear\)')
     
-def _get_template_columns(coeffs, template):
+def _get_template_columns(coeffs, template, columns=None):
     mask = np.array(list(re.match(template, col) is not None
-                         for col in coeffs.columns))
+                         for col in columns))
     return np.array(coeffs)[:, mask]
 
 def _get_rwd_lin(coeffs):
@@ -314,6 +382,21 @@ def _get_rwd_nonlin(coeffs):
 
 def _get_prob_nonlin(coeffs):
     return _get_template_columns(coeffs, 'prob:.* \(nonlinear\)')
+
+def _get_rwd_lin_boot(coeffs, columns):
+    return _get_template_columns(coeffs, 'reward', columns=columns)
+
+def _get_prob_lin_boot(coeffs, columns):
+    return _get_template_columns(coeffs, 'probability', columns=columns)
+
+def _get_rwd_nonlin_boot(coeffs,columns):
+    return _get_template_columns(coeffs, 'rwd x.*', columns=columns)
+
+def _get_prob_nonlin_boot(coeffs, columns):
+    return _get_template_columns(coeffs, 'prob x.*', columns=columns)
+
+def _get_nv_boot(coeffs, columns):
+    return _get_template_columns(coeffs, 'MSE_TRAIN', columns=columns)
 
 class TheoryFigure(MultipleRepFigure):
 
@@ -331,6 +414,35 @@ class TheoryFigure(MultipleRepFigure):
         gss = {}
         self.gss = gss
 
+    def get_coeffs_bootstrapped(self, force_reload=False, methods=('Boot-EN',),
+                                key='ALL_MONKEY', col_key='variables'):
+        if self.data.get('saved_coefficients') is None or force_reload:
+            folder = self.params.get('coeff_folder')
+            file_ = self.params.get('coeff_boot_file')
+            use_regions = self.params.getlist('use_regions')
+            time_ind = self.params.getint('coeff_time_ind')
+            column_file = self.params.get('coeff_boot_columns')
+
+            out_coeffs = {}
+            for method in methods:
+                use_folder = folder.format(method=method)
+                columns = sio.loadmat(os.path.join(use_folder, column_file))
+                columns = np.array(list(c[0] for c in columns[col_key][0]))
+
+                out_coeffs[method] = {}
+                coeff_data = sio.loadmat(os.path.join(use_folder, file_))
+                coeff_data = coeff_data[key][0, 0]
+                for region in list(coeff_data.dtype.names):
+                    if region in use_regions:
+                        coeff_mat = coeff_data[region][0, 0][0][0, time_ind]
+                        out_coeffs[method][region] = (coeff_mat, columns)
+                if 'all' in use_regions:
+                    coeff_list = list(oc[0] for oc in out_coeffs[method].values())
+                    coeff_all = np.concatenate(coeff_list, axis=0)
+                    out_coeffs[method]['all'] = (coeff_all, columns)
+            self.data['saved_coefficients'] = out_coeffs
+        return self.data['saved_coefficients']
+        
     def get_coeffs(self, force_reload=False):            
         if self.data.get('saved_coefficients') is None or force_reload:
             methods = self.params.getlist('methods')
@@ -354,25 +466,39 @@ class TheoryFigure(MultipleRepFigure):
                 out_coeffs[method]['all'] = all_conc
             self.data['saved_coefficients'] = out_coeffs
         return self.data['saved_coefficients']
-
     
-    def panel_coeff_prediction(self, force_recompute=False):
+    def panel_coeff_prediction(self, force_recompute=False, boot=True):
         key = 'panel_coeff_prediction'
-        coeffs = self.get_coeffs(force_reload=force_recompute)
+        if boot:
+            coeffs = self.get_coeffs_bootstrapped(force_reload=force_recompute)
+        else:
+            coeffs = self.get_coeffs(force_reload=force_recompute)
         if self.data.get(key) is None or force_recompute:
             out_prediction = {}
             for method, coeffs_m in coeffs.items():
                 out_prediction[method] = {}
                 for region, cs in coeffs_m.items():
-                    rwd_lin = _get_rwd_lin(cs)
-                    prob_lin = _get_prob_lin(cs)
-                    rwd_nonlin = _get_rwd_nonlin(cs)
-                    prob_nonlin = _get_prob_nonlin(cs)
-                    r2 = _get_template_columns(cs, 'pseudoR2')
-                    if r2.shape[1] > 0:
-                        resid_var = 1 - r2
+                    if boot:
+                        coeffs, columns = cs
+                        rwd_lin = _get_rwd_lin_boot(coeffs, columns=columns)
+                        prob_lin = _get_prob_lin_boot(coeffs, columns=columns)
+                        rwd_nonlin = _get_rwd_nonlin_boot(coeffs,
+                                                          columns=columns)
+                        prob_nonlin = _get_prob_nonlin_boot(coeffs,
+                                                            columns=columns)
+                        r2 = np.zeros((rwd_lin.shape[0], 1, 1))
+                        resid_var = np.sqrt(_get_nv_boot(coeffs,
+                                                         columns=columns))
                     else:
-                        resid_var = np.expand_dims(1, (0, 1))
+                        rwd_lin = _get_rwd_lin(cs)
+                        prob_lin = _get_prob_lin(cs)
+                        rwd_nonlin = _get_rwd_nonlin(cs)
+                        prob_nonlin = _get_prob_nonlin(cs)
+                        r2 = _get_template_columns(cs, 'pseudoR2')
+                        if r2.shape[1] > 0:
+                            resid_var = 1 - r2
+                        else:
+                            resid_var = np.expand_dims(1, (0, 1))
                     rwd_out = mra.predict_asymp_dists(
                         rwd_lin, rwd_nonlin, resid_var, k=2, n=2)
                     prob_out = mra.predict_asymp_dists(
