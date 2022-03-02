@@ -52,9 +52,6 @@ class MultipleRepFigure(pu.Figure):
         if len(unsaved_keys) > 0:
             print('the following keys did not exist and were not '
                   'saved:\n{}'.format(unsaved_keys))
-    # @property
-    # def monkey_colors(self):
-    #     return self._make_color_dict(self.monkeys)
     
 def _accumulate_time(pop, keepdim=True, ax=1):
     out = np.concatenate(list(pop[..., i] for i in range(pop.shape[-1])),
@@ -81,30 +78,7 @@ class DecodingFigure(MultipleRepFigure):
         super().__init__(fsize, params, colors=colors, **kwargs)
 
     def make_gss(self):
-        gss = {}
-
-        # task_schem_grid = self.gs[:, :25]
-        # gss['panel_task_schematic'] = self.get_axs((task_schem_grid,))
-        
-        # err_grid = pu.make_mxn_gridspec(self.gs, 2, 2,
-        #                                 0, 100, 35, 50,
-        #                                 10, 2)
-        # gss['panel_err_distribution'] = self.get_axs(err_grid, sharex=True,
-        #                                        sharey=True)
-
-        # model_schem_grid = self.gs[:, 55:75]
-        # gss['panel_model_schematic'] = self.get_axs((model_schem_grid,))
-
-        # r_simp_gs = pu.make_mxn_gridspec(self.gs, 2, 1,
-        #                                  0, 100, 80, 100,
-        #                                  10, 0)
-        # r_simp_3d = np.zeros_like(r_simp_gs, dtype=bool)
-        # r_simp_3d[1] = False
-        # err_rate_ax, simp_ax = self.get_axs(r_simp_gs, plot_3ds=r_simp_3d)
-
-        # gss['panel_err_rates'] = err_rate_ax[0]
-        # gss['panel_trial_simplex'] = simp_ax[0]
-        
+        gss = {}        
         self.gss = gss
 
     def get_experimental_data(self, force_reload=False):
@@ -214,27 +188,68 @@ class DecodingFigure(MultipleRepFigure):
                 model_dict[region] = {}
                 for contrast, out in dec_results.items():
                     _, _, p1, p2, p3, p4, _ = out
-                    out = mrdt.direct_ccgp_bind_est_pops(
-                        (p1, p2), (p3, p4))
-                    out_dict = {'pred_ccgp':1 - out[1],
-                                'pred_bin':1 - out[0]}
+                    if p1.shape[1] > 0:
+                        out = mrdt.direct_ccgp_bind_est_pops(
+                            (p1, p2), (p3, p4), test_prop=0,
+                            empirical=False)
+                        out_dict = {'pred_ccgp':1 - out[1],
+                                    'pred_bin':1 - out[0],
+                                    'd_l':out[2][0],
+                                    'd_n':out[2][1],
+                                    'sigma':out[2][2]}
+                    else:
+                        out_dict = None
                     model_dict[region][contrast] = out_dict
         return model_dict
                     
     def panel_rwd_direct_predictions(self, force_refit=False):
-        key = 'panel_rwd_direct_predictions'
+        key = 'rwd_direct_predictions'
+        save_key = 'panel_rwd_direct_predictions'
         dec_key = 'rwd_generalization'
         if self.data.get(key) is None or force_refit:
             self.data[key] = self._direct_predictions(dec_key)
+        if self.data.get(save_key) is None:
+            self.make_dec_save_dicts(keys=(key,),
+                                     loss=False,
+                                     keep_subset=False)
         return self.data[key]
                                      
     def panel_prob_direct_predictions(self, force_refit=False):
-        key = 'panel_prob_direct_predictions'
+        key = 'prob_direct_predictions'
+        save_key = 'panel_prob_direct_predictions'
         dec_key = 'prob_generalization'
         if self.data.get(key) is None or force_refit:
             self.data[key] = self._direct_predictions(dec_key)
+        if self.data.get(save_key) is None:
+            self.make_dec_save_dicts(keys=(key,),
+                                     loss=False,
+                                     keep_subset=False)
         return self.data[key]
-    
+
+    def panel_ev_direct_predictions(self, force_refit=False):
+        key = 'ev_direct_predictions'
+        save_key = 'panel_ev_direct_predictions'
+        dec_key = 'ev_generalization'
+        if self.data.get(key) is None or force_refit:
+            self.data[key] = self._direct_predictions(dec_key)
+        if self.data.get(save_key) is None:
+            self.make_dec_save_dicts(keys=(key,),
+                                     loss=False,
+                                     keep_subset=False)
+        return self.data[key]
+
+    def panel_ev_other_direct_predictions(self, force_refit=False):
+        key = 'ev_other_direct_predictions'
+        save_key = 'panel_ev_other_direct_predictions'
+        dec_key = 'ev_generalization_other'
+        if self.data.get(key) is None or force_refit:
+            self.data[key] = self._direct_predictions(dec_key)
+        if self.data.get(save_key) is None:
+            self.make_dec_save_dicts(keys=(key,),
+                                     loss=False,
+                                     keep_subset=False)
+        return self.data[key]
+
     def panel_prob_model_prediction(self, force_refit=False,
                                     force_recompute=False):
         key = 'panel_prob_model_prediction'
@@ -263,7 +278,7 @@ class DecodingFigure(MultipleRepFigure):
 
     def make_dec_save_dicts(self, keys=('prob_generalization',
                                         'rwd_generalization'),
-                            loss=True, prefix='panel'):
+                            loss=True, prefix='panel', **kwargs):
         for k in keys:
             reg_dict = {}
             if loss:
@@ -273,7 +288,8 @@ class DecodingFigure(MultipleRepFigure):
                 reform_func = mra.reformat_dict
                 new_key = prefix + '_' + k
             for region, data in self.data[k].items():
-                reg_dict[region] = reform_func(self.data[k][region])
+                reg_dict[region] = reform_func(self.data[k][region],
+                                               **kwargs)
             self.data[new_key] = reg_dict
 
     def prob_generalization(self, force_reload=False,
@@ -303,12 +319,53 @@ class DecodingFigure(MultipleRepFigure):
             self.data[key] = out
         return self.data[key]
 
+    def ev_generalization(self, force_reload=False,
+                          force_recompute=False,
+                          use_subj=True):
+        data_field = 'ev'
+        if use_subj:
+            data_field = 'subj_' + data_field
+        key = 'ev_generalization'
+        dead_perc = self.params.getfloat('exclude_middle_percentiles')
+        min_trials = self.params.getint('min_trials_ev')
+        mask_func = lambda x: x < 1
+        mask_var = 'prob'
+        use_split_dec = None
+        if self.data.get(key) is None or force_recompute:
+            out = self._decoding_analysis(data_field, mra.compute_all_generalizations,
+                                          force_reload=force_reload,
+                                          dead_perc=dead_perc,
+                                          min_trials=min_trials,
+                                          use_split_dec=use_split_dec,
+                                          mask_func=mask_func, mask_var=mask_var)
+            self.data[key] = out
+        return self.data[key]
+    
+    def ev_generalization_other(self, force_reload=False,
+                                force_recompute=False,
+                                use_subj=True):
+        data_field = 'ev'
+        if use_subj:
+            data_field = 'subj_' + data_field
+        key = 'ev_generalization_other'
+        dead_perc = self.params.getfloat('exclude_middle_percentiles')
+        min_trials = self.params.getint('min_trials_ev_other')
+        use_split_dec = None
+        if self.data.get(key) is None or force_recompute:
+            out = self._decoding_analysis(data_field,
+                                          mra.compute_conditional_generalization,
+                                          force_reload=force_reload,
+                                          dead_perc=dead_perc,
+                                          min_trials=min_trials,
+                                          use_split_dec=use_split_dec)
+            self.data[key] = out
+        return self.data[key]
+    
     def _generic_dec_panel(self, key, func, *args, dec_key=None, loss=False,
                            **kwargs):
-        if self.data.get(key) is None:
-            func(*args, **kwargs)
-            key_i = key.split('_', 1)[1]
-            self.make_dec_save_dicts(keys=(key_i,), loss=loss)
+        func(*args, **kwargs)
+        key_i = key.split('_', 1)[1]
+        self.make_dec_save_dicts(keys=(key_i,), loss=loss)
         return self.data[key]
 
     def _plot_gen_results(self, dec_key, theory_key):
@@ -325,14 +382,24 @@ class DecodingFigure(MultipleRepFigure):
         
     def plot_all_prob_generalization(self):
         dec_gen_key = 'prob_generalization'
-        dec_gen_theory_key = 'panel_prob_direct_predictions'
+        dec_gen_theory_key = 'prob_direct_predictions'
         return self._plot_gen_results(dec_gen_key, dec_gen_theory_key)
 
     def plot_all_rwd_generalization(self):
         dec_gen_key = 'rwd_generalization'
-        dec_gen_theory_key = 'panel_rwd_direct_predictions'
+        dec_gen_theory_key = 'rwd_direct_predictions'
         return self._plot_gen_results(dec_gen_key, dec_gen_theory_key)
-    
+
+    def plot_all_ev_generalization(self):
+        dec_gen_key = 'ev_generalization'
+        dec_gen_theory_key = 'ev_direct_predictions'
+        return self._plot_gen_results(dec_gen_key, dec_gen_theory_key)
+
+    def plot_all_ev_generalization_other(self):
+        dec_gen_key = 'ev_generalization_other'
+        dec_gen_theory_key = 'ev_other_direct_predictions'
+        return self._plot_gen_results(dec_gen_key, dec_gen_theory_key)
+
     def panel_prob_generalization(self, *args, **kwargs):
         key = 'panel_prob_generalization'
         return self._generic_dec_panel(key, self.prob_generalization, *args,
@@ -342,7 +409,17 @@ class DecodingFigure(MultipleRepFigure):
         key = 'panel_rwd_generalization'
         return self._generic_dec_panel(key, self.rwd_generalization, *args,
                                        **kwargs)
-    
+
+    def panel_ev_generalization(self, *args, **kwargs):
+        key = 'panel_ev_generalization'
+        return self._generic_dec_panel(key, self.ev_generalization, *args,
+                                       **kwargs)
+
+    def panel_ev_generalization_other(self, *args, **kwargs):
+        key = 'panel_ev_generalization_other'
+        return self._generic_dec_panel(key, self.ev_generalization_other, *args,
+                                       **kwargs)
+
     def panel_loss_prob_generalization(self, *args, **kwargs):
         key = 'panel_loss_prob_generalization'
         dec_key = 'prob_generalization'
@@ -355,10 +432,18 @@ class DecodingFigure(MultipleRepFigure):
         key = 'panel_loss_rwd_generalization'
         dec_key = 'rwd_generalization'
         if self.data.get(dec_key) is None:
-            self.panel_prob_generalization(*args, **kwargs)
+            self.panel_rwd_generalization(*args, **kwargs)
         self.make_dec_save_dicts(keys=(dec_key,), loss=True)
         return self.data[key]
-    
+
+    def panel_loss_ev_generalization(self, *args, **kwargs):
+        key = 'panel_loss_ev_generalization'
+        dec_key = 'ev_generalization'
+        if self.data.get(dec_key) is None:
+            self.panel_ev_generalization(*args, **kwargs)
+        self.make_dec_save_dicts(keys=(dec_key,), loss=True)
+        return self.data[key]
+
 
 def _get_nonlinear_columns(coeffs):
     return _get_template_columns(coeffs, '.*\(nonlinear\)')

@@ -4,8 +4,68 @@ import sklearn.decomposition as skd
 import matplotlib.pyplot as plt
 import functools as ft
 
+import general.utility as u
 import general.plotting as gpl
 import composite_tangling.code_analysis as ca
+
+def plot_lin_nonlin_schem(line_pts=2, sep_dist=.5, val_dist=1, nonlin_dist=.2,
+                          ax=None, fwid=5, lin1_col=(.1, .5, .1),
+                          lin2_col=(.1, .8, .1),
+                          nonlin_col=(.8, .1, .1), comb1_col=(.5, .7, .1),
+                          comb2_col=(.7, .5, .1),
+                          ms=8, lin_alpha=.3, seed=None):
+    if ax is None:
+        f = plt.figure(figsize=(fwid, fwid))
+        ax = f.add_subplot(1, 1, 1, projection='3d')
+    lin_pts_1 = np.array([[-sep_dist/2, -val_dist/2],
+                          [-sep_dist/2, val_dist/2]])
+    lin_pts_2 = np.array([[sep_dist/2, -val_dist/2],
+                          [sep_dist/2, val_dist/2]])
+
+    # figure out actual rotation matrix do 45 by 45
+    rot = np.array([[0, -1],
+                    [1, 0],
+                    [1, -1]])
+    rot = u.make_unit_vector(rot.T).T
+    lin_pts_1 = np.dot(rot, lin_pts_1.T).T
+    lin_pts_2 = np.dot(rot, lin_pts_2.T).T
+    rng = np.random.default_rng(seed)
+    nonlin_perts = u.make_unit_vector(rng.normal(0, nonlin_dist, (4, 3)))
+    nonlin_perts = nonlin_perts*nonlin_dist
+
+    lin_pts_all = np.concatenate((lin_pts_1, lin_pts_2), axis=0)
+    lin_pts_c1 = np.stack((lin_pts_1[0], lin_pts_2[0]), axis=0)
+    lin_pts_c2 = np.stack((lin_pts_1[1], lin_pts_2[1]), axis=0)
+    
+    ax.plot(*lin_pts_1.T, color=lin1_col, alpha=lin_alpha)
+    ax.plot(*lin_pts_2.T, color=lin1_col, alpha=lin_alpha, label='value')
+    ax.plot(*lin_pts_c1.T, color=lin2_col, alpha=lin_alpha, label='side')
+    ax.plot(*lin_pts_c2.T, color=lin2_col, alpha=lin_alpha)
+    
+    # ax.plot(*lin_pts_2.T, color=lin_col, alpha=lin_alpha)
+    # ax.plot(*lin_pts_1.T, 'o', color=lin_col, ms=ms, alpha=lin_alpha)
+    # ax.plot(*lin_pts_2.T, 'o', color=lin_col, ms=ms, alpha=lin_alpha)
+
+    for i, lp_i in enumerate(lin_pts_all):
+        pert_plot = np.stack((lp_i, lp_i + nonlin_perts[i]), axis=0)
+        ax.plot(*pert_plot.T, color=nonlin_col, alpha=lin_alpha)
+
+    comb_pts_all = lin_pts_all + nonlin_perts
+    ax.plot(*comb_pts_all[:2].T, color=comb1_col, label='right value')
+    ax.plot(*comb_pts_all[2:].T, color=comb2_col, label='left value')
+
+    ax.plot(*(comb_pts_all[2:] - comb_pts_all[3:4]
+              + comb_pts_all[1:2]).T, linestyle='dashed', color=comb2_col)
+
+    ax.plot(*comb_pts_all[:2].T, 'o', color=comb1_col, ms=ms)
+    ax.plot(*comb_pts_all[2:].T, 'o', color=comb2_col, ms=ms)
+
+    ax.legend(frameon=False)
+    ax.set_xlabel('dim 1')
+    ax.set_ylabel('dim 2')
+    ax.set_zlabel('dim 3')
+    ax.view_init(10, 190)
+    return f, ax
 
 def plot_all_gen(gen_dict, axs=None, fwid=4, upsampled=False, prediction=None):
     n_plots = len(gen_dict) 
@@ -19,17 +79,25 @@ def plot_all_gen(gen_dict, axs=None, fwid=4, upsampled=False, prediction=None):
         else:
             gen = dec
         try:
-            var, dec_cond = key[0].split('_')
-            var, gen_cond = key[1].split('_')
+            split_k0 = key[0].split('_') 
+            if len(split_k0) > 2:
+                var = '_'.join(split_k0[:2])
+                dec_cond = split_k0[2]
+            else:
+                var, dec_cond = key[0].split('_')
+            gen_cond = key[1].split('_')[-1]
         except:
+            print(key[0])
             var, dec_cond = key[0].split(' ', 1)
             var, gen_cond = key[1].split(' ', 1)
         if prediction is not None:
             pred = prediction.get(key)
             if pred is None:
                 pred = prediction.get(key[::-1])
-            pred_ccgp = np.mean(pred['pred_ccgp'], axis=1)
-            
+            if pred is not None:
+                pred_ccgp = np.mean(pred['pred_ccgp'], axis=1)
+            else:
+                pred_ccgp = None
         else:
             pred_ccgp = None
         plot_decoding_gen(xs, dec, gen, var, dec_cond=dec_cond,

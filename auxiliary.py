@@ -13,6 +13,13 @@ bhv_fields_rename = {'trials.included':'include',
                      'trials.response_choice':'choice',
                      'trials.feedbackType':'feedback'}
 
+def accumulate_time(pop, keepdim=True, ax=1):
+    out = np.concatenate(list(pop[..., i] for i in range(pop.shape[-1])),
+                         axis=ax)
+    if keepdim:
+        out = np.expand_dims(out, -1)
+    return out
+
 def load_justin_betas(path, region='OFC', key='OLS', key_top='ALL_BETA',
                       bottom_key='betas'):
     coefs = sio.loadmat(path)[key_top]
@@ -123,6 +130,14 @@ split_fields = (('prob offer 1', 'prob offer 2'),
                 ('Offer 1 off', 'Offer 2 off'))
 new_fields = ('prob_{}', 'rwd_{}', 'ev_{}', 'offer_{}_on', 'offer_{}_off')
 
+subj_split_fields = (('probability weighted offer 1 JMF',
+                      'probability weighted offer 2 JMF'),
+                     ('reward weighted offer 1 JMF',
+                      'reward weighted offer 2 JMF'),
+                     ('subjective utlity offer 1 JMF',
+                      'subjective utlity offer 2 JMF'))
+subj_new_fields = ('subj_prob_{}', 'subj_rwd_{}', 'subj_ev_{}')
+
 chosen_offer_field = 'choice offer 1 (==1) or 2 (==0)'
 def _make_convenience_data_vars(sd, offer1_side=offer1_side_field,
                                 split_fields=split_fields,
@@ -201,9 +216,27 @@ def load_fine_data(folder, regions_list=('OFC', 'PCC', 'pgACC', 'vmPFC', 'VS'),
                     session_dict.update(timing_dict)
                     session_dict = _make_convenience_data_vars(session_dict)
                     session_dict = _make_convenience_data_vars(
+                        session_dict, split_fields=subj_split_fields,
+                        new_fields=subj_new_fields)
+                    session_dict = _make_convenience_data_vars(
                         session_dict, offer1_side=chosen_offer_field,
                         split_keys=('chosen', 'unchosen'))
-                
+                    session_dict = _make_convenience_data_vars(
+                        session_dict, split_fields=subj_split_fields,
+                        new_fields=subj_new_fields,
+                        offer1_side=chosen_offer_field,
+                        split_keys=('chosen', 'unchosen'))
+ 
+                    k1 = 'Expected value offer 1'
+                    session_dict['ev offer 1'] = session_dict[k1]
+                    k2 = 'Expected value offer 2'
+                    session_dict['ev offer 2'] = session_dict[k2]
+                    session_frame = pd.DataFrame.from_dict(session_dict)
+
+                    k1 = 'subjective utlity offer 1 JMF'
+                    session_dict['subj_ev offer 1'] = session_dict[k1]
+                    k2 = 'subjective utlity offer 2 JMF'
+                    session_dict['subj_ev offer 2'] = session_dict[k2]
                     session_frame = pd.DataFrame.from_dict(session_dict)
 
                     n_neurs.append(pop.shape[1])

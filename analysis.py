@@ -11,7 +11,9 @@ import scipy.stats as sts
 
 import general.utility as u
 import general.neural_analysis as na
+import general.data_io as gio
 import multiple_representations.theory as mrt
+import multiple_representations.auxiliary as mraux
 
 def contrast_regression(data, tbeg, tend, binsize=None, binstep=None,
                         include_field='include',
@@ -183,24 +185,31 @@ def compute_ccgp_bin_prediction(lm, nlm, nv, r2=None, multi_task=False):
 def _get_percentile_mask(field_data, dead_perc, additional_data=None,
                          ref_data=None):
     if ref_data is None:
-        ref_data = field_data        
-    low_thr = np.percentile(np.concatenate(ref_data, axis=0), 
-                            50 - dead_perc/2)
-    high_thr = np.percentile(np.concatenate(ref_data, axis=0), 
-                             50 + dead_perc/2)
-    high_mask = field_data > high_thr
-    low_mask = field_data < low_thr
-    out = (high_mask, low_mask)
+        ref_data = field_data
+    high_masks, low_masks = [], []
     if additional_data is not None:
-        add_high = additional_data > high_thr
-        add_low = additional_data < low_thr
-        out = out + (add_high, add_low)
+        high_masks_ad, low_masks_ad = [], []
+    for i, rd in enumerate(ref_data):
+        low_thr = np.percentile(rd, 50 - dead_perc/2)
+        high_thr = np.percentile(rd, 50 + dead_perc/2)
+        high_mask = field_data[i] >= high_thr
+        low_mask = field_data[i] <= low_thr
+        high_masks.append(high_mask)
+        low_masks.append(low_mask)
+        if additional_data is not None:
+            high_masks_ad.append(additional_data[i] >= high_thr)
+            low_masks_ad.append(additional_data[i] <= low_thr)
+    
+    out = (gio.ResultSequence(high_masks), gio.ResultSequence(low_masks))
+    if additional_data is not None:
+        out = out + (gio.ResultSequence(high_masks_ad),
+                     gio.ResultSequence(low_masks_ad))
     return out
 
 def full_lm_organization(data, tbeg, tend, dead_perc=30, winsize=500, tstep=20,
                          turn_feature=('ev_left', 'ev_right'),
                          tzf_1='Offer 1 on', tzf_2='Offer 2 on',
-                         pre_pca=.95):
+                         pre_pca=.95, **kwargs):
     """
     (1, -1) presented stim is high vs low EV
     (1, -1) presented stim is first vs second
@@ -215,9 +224,11 @@ def full_lm_organization(data, tbeg, tend, dead_perc=30, winsize=500, tstep=20,
     mask1_high, mask1_low, mask2_high, mask2_low = out
     cond_pop_pair = []
     pops1, xs = data.get_psth(binsize=winsize, begin=tbeg, end=tend,
-                              time_zero_field=tzf_1)
+                              binstep=tstep,
+                              time_zero_field=tzf_1, **kwargs)
     pops2, xs = data.get_psth(binsize=winsize, begin=tbeg, end=tend,
-                              time_zero_field=tzf_2)
+                              binstep=tstep,
+                              time_zero_field=tzf_2, **kwargs)
     for i, session in enumerate(data.data['data']):
         m1h_i = mask1_high[i]
         m1l_i = mask1_low[i]
@@ -262,7 +273,11 @@ def full_lm_organization(data, tbeg, tend, dead_perc=30, winsize=500, tstep=20,
                                  for cond in cond_list)).reshape(-1, 1)
         nonlin_mat = ohe.transform(int_list)
         cond_pop_pair.append(((fc_i, nonlin_mat), pop_i))
-    return cond_pop_pair, xs
+    trl_pop_pair = []
+    for conds, pop_i in cond_pop_pair:
+        if pop_i.shape[1] > 0:
+            trl_pop_pair.append((conds, pop_i))
+    return trl_pop_pair, xs
 
 def _reformat_mat(mat):
     mat = np.swapaxes(mat, 0, 2)
@@ -305,6 +320,24 @@ def predict_tradeoff_betas(betas):
     out = predict_ccgp_binding(lm, nlm, resid_var, n=2)
     return out
 
+def fit_simple_full_lms(cond_pop_pairs, model=sklm.LinearRegression,
+                        norm=True, pre_pca=None, time_ind=None, **model_kwargs):
+    m = model(fit_intercept=False,  **model_kwargs)
+    pop_outs = []
+    scaler = na.make_model_pipeline(norm=True, pca=pre_pca)
+    for i, ((l_conds, n_conds), pop) in enumerate(cond_pop_pairs):
+        if time_ind is None:
+            pop = mraux.accumulate_time(pop)
+        else:
+            pop = pop[..., time_ind:time_ind+1]
+        print(pop.shape)
+        pop_trs = na.apply_transform_tc(pop, scaler)
+        conds = np.concatenate((l_conds, n_conds), axis=1)
+        m.fit(conds, pop_trs[..., 0])
+        u_conds = np.unique(conds, axis=0)
+        pop_outs.append((u_conds, pop_trs, m.coef_))
+    return pop_outs
+
 rand_splitter = skms.ShuffleSplit
 def fit_full_lms(cond_pop_pairs, model=sklm.MultiTaskElasticNetCV, norm=True,
                  pca=None, rand_splitter=rand_splitter, test_prop=None,
@@ -346,6 +379,18 @@ def xor_analysis(data, tbeg, tend, dec1_field, dec2_field,
                  shuffle_trials=True, c1_targ=2,
                  c2_targ=3, dec1_mask=None, dec2_mask=None,
                  **kwargs):
+    out = _compute_masks(data, feat1, feat2, dead_perc=dead_perc,
+                         use_split_dec=use_split_dec, dec_mask=f1_mask,
+                         gen_mask=f2_mask, c1_targ=c1_targ, c2_targ=c2_targ)
+    mask_f11, mask_f12, mask_f21, mask_f22 = out
+    tzfs = (f1_tzf, f1_tzf, f2_tzf, f2_tzf)
+
+    out = data.make_pseudo_pops(winsize, tbeg, tend, tstep,
+                                mask_f11, mask_f12, mask_f21, mask_f22,
+                                tzfs=tzfs,
+                                regions=regions, min_trials=min_trials,
+                                resamples=pop_resamples)
+    xs, (pop_f11, pop_f12, pop_f21, pop_f22) = out
     if dead_perc is not None:
         out = _get_percentile_mask(data[dec1_field], dead_perc,
                                    data[dec2_field])
@@ -402,9 +447,9 @@ def binding_analysis(data, tbeg, tend, feat1, feat2,
                      f1_tzf='offer_left_on', f2_tzf='offer_right_on',
                      min_trials=160, pre_pca=None,
                      shuffle_trials=True, c1_targ=2, c2_targ=3,
-                     f1_mask=None, f2_mask=None, use_split_dec='prob_chosen',
+                     f1_mask=None, f2_mask=None, use_split_dec=None,
                      regions=None, shuffle=False, mean=False,
-                     n_folds=20, params=None, **kwargs):
+                     n_folds=20, params=None, xor=False, **kwargs):
     if params is None:
         params = {'class_weight':'balanced'}
         # params.update(kwargs)            
@@ -413,6 +458,7 @@ def binding_analysis(data, tbeg, tend, feat1, feat2,
                          gen_mask=f2_mask, c1_targ=c1_targ, c2_targ=c2_targ)
     mask_f11, mask_f12, mask_f21, mask_f22 = out
     tzfs = (f1_tzf, f1_tzf, f2_tzf, f2_tzf)
+
     out = data.make_pseudo_pops(winsize, tbeg, tend, tstep,
                                 mask_f11, mask_f12, mask_f21, mask_f22,
                                 tzfs=tzfs,
@@ -421,10 +467,14 @@ def binding_analysis(data, tbeg, tend, feat1, feat2,
     xs, (pop_f11, pop_f12, pop_f21, pop_f22) = out
 
     outs = np.zeros((len(pop_f11), n_folds, len(xs)))
+    print(pop_f11.shape, pop_f12.shape, pop_f21.shape, pop_f22.shape)
     for i, pop_f11_i in enumerate(pop_f11):
-        c1 = pop_f11_i + pop_f22[i]
-        c2 = pop_f12[i] + pop_f21[i]
-        print(pop_f11_i.shape, c1.shape)
+        if xor:
+            c1 = np.concatenate((pop_f11_i, pop_f22[i]), axis=2)
+            c2 = np.concatenate((pop_f12[i], pop_f21[i]), axis=2)
+        else:
+            c1 = pop_f11_i + pop_f22[i]
+            c2 = pop_f12[i] + pop_f21[i]
         out = na.fold_skl(c1, c2, n_folds, params=params, 
                           mean=mean, pre_pca=pre_pca, shuffle=shuffle,
                           impute_missing=False,
@@ -441,13 +491,13 @@ def generalization_analysis(data, tbeg, tend, dec_field, gen_field,
                             min_trials=160, pre_pca=None,
                             shuffle_trials=True, c1_targ=2,
                             c2_targ=3, f1_mask=None, f2_mask=None,
-                            use_split_dec='prob_chosen',
+                            use_split_dec=None,
                             **kwargs):
     out = _compute_masks(data, dec_field, gen_field, dead_perc=dead_perc,
                          use_split_dec=use_split_dec, dec_mask=f1_mask,
                          gen_mask=f2_mask, c1_targ=c1_targ, c2_targ=c2_targ)
     mask_c1, mask_c2, gen_mask_c1, gen_mask_c2 = out
-    
+
     out = data.decode_masks(mask_c1, mask_c2, winsize, tbeg, tend, tstep, 
                             pseudo=True, time_zero_field=f1_tzf,
                             min_trials_pseudo=min_trials,
@@ -481,21 +531,25 @@ def discretize_classifier_gen(pops_tr, rts_tr, pops_te, rts_te,
 
 def reformat_dict(out_dict, keep_inds=(0, 1, -1),
                   keep_labels=('dec', 'xs', 'gen'),
-                  save_dict=True, str_key=True):
+                  save_dict=True, str_key=True,
+                  keep_subset=True):
     new_dict = {}
-    for (dec, gen), val in out_dict.items():
-        if save_dict:
-            sub_item = {}
-            for i, keep_ind in enumerate(keep_inds):
-                sub_item[keep_labels[i]] = val[keep_ind]
+    for key, val in out_dict.items():
+        if keep_subset:
+            if save_dict:
+                sub_item = {}
+                for i, keep_ind in enumerate(keep_inds):
+                    sub_item[keep_labels[i]] = val[keep_ind]
+            else:
+                sub_item = []
+                for i, keep_ind in enumerate(keep_inds):
+                    sub_item.append(val[keep_ind])
         else:
-            sub_item = []
-            for i, keep_ind in enumerate(keep_inds):
-                sub_item.append(val[keep_ind])
+            sub_item = val                    
         if str_key:
-            nk = '-'.join((dec, gen))
+            nk = '-'.join(str(k_i) for k_i in key)
         else:
-            nk = (dec, gen)
+            nk = key
         new_dict[nk] = sub_item
     return new_dict
 
@@ -512,22 +566,92 @@ def reformat_generalization_loss(out_dict, save_dict=True):
             loss_dict[dec] = (p, xs, g_flip)
     return loss_dict
 
+
+def _prob_side_tune(data, f1, f2, side=0, prob_less=1):
+    prob_m = data[f1] < prob_less
+    side_m = data[f2] == side
+    return prob_m.rs_and(side_m)
+
+cond_suffixes = (('_left', '_right', 'prob',
+                  ['side of offer 1 (Left = 1 Right =0)']),
+                 ('_right', '_left', 'prob',
+                  ['side of offer 1 (Left = 1 Right =0)']),
+                 ('_left', '_left', 'prob',
+                  ['side of offer 1 (Left = 1 Right =0)']),
+                 ('_right', '_right', 'prob',
+                  ['side of offer 1 (Left = 1 Right =0)']))
+cond_timing = (('offer_left_on', 'offer_right_on'),
+               ('offer_right_on', 'offer_left_on'),
+               ('offer_left_on', 'offer_left_on'),
+               ('offer_right_on', 'offer_right_on'))
+cond_funcs = ((ft.partial(_prob_side_tune, side=1),
+               ft.partial(_prob_side_tune, side=1)),
+              (ft.partial(_prob_side_tune, side=1),
+               ft.partial(_prob_side_tune, side=0)),
+              (ft.partial(_prob_side_tune, side=0),
+               ft.partial(_prob_side_tune, side=1)),
+              (ft.partial(_prob_side_tune, side=0),
+               ft.partial(_prob_side_tune, side=0)))
+              
+def compute_conditional_generalization(data, tbeg, tend, dec_var,
+                                       conditional_funcs=cond_funcs,
+                                       suffixes=cond_suffixes,
+                                       timing=cond_timing, 
+                                       compute_reverse=True,
+                                       **kwargs):
+    out_dict = {}
+    for i, (dec_suff, gen_suff, mask_var, other_mask) in enumerate(suffixes):
+        dec_field = dec_var + dec_suff
+        gen_field = dec_var + gen_suff
+        mask_dec_field = mask_var + dec_suff
+        mask_gen_field = mask_var + gen_suff
+
+        full_dec_mask = [mask_dec_field] + other_mask
+        full_gen_mask = [mask_gen_field] + other_mask
+
+        dec_tzf, gen_tzf = timing[i]
+        print(dec_field, dec_tzf)
+        print(gen_field, gen_tzf)
+        for j, cf in enumerate(cond_funcs):
+            conditional_func_dec, conditional_func_gen = cond_funcs[j]
+            dec_mask = conditional_func_dec(data, *full_dec_mask)
+            gen_mask = conditional_func_gen(data, *full_gen_mask)
+
+            out = generalization_analysis(data, tbeg, tend, dec_field, gen_field,
+                                          f1_mask=dec_mask, f2_mask=gen_mask,
+                                          f1_tzf=dec_tzf, f2_tzf=gen_tzf,
+                                          **kwargs)
+            out_dict[(dec_field, gen_field, j)] = out
+    return out_dict  
+
 default_suffixes = (('_chosen', '_unchosen'), ('_left', '_right'),
                     (' offer 1', ' offer 2'))
+default_suffixes = (('_left', '_right'),
+                    (' offer 1', ' offer 2'))
+
 default_timing = (('offer_chosen_on', 'offer_unchosen_on'),
                   ('offer_left_on', 'offer_right_on'),
+                  ('Offer 1 on', 'Offer 2 on'))
+default_timing = (('offer_left_on', 'offer_right_on'),
                   ('Offer 1 on', 'Offer 2 on'))
 def _compute_all_funcs(data, tbeg, tend, dec_var, func,
                        suffixes=default_suffixes,
                        timing=default_timing, mask_func=None,
-                       compute_reverse=True, **kwargs):
+                       compute_reverse=True, mask_var=None, **kwargs):
     out_dict = {}
     for i, (dec_suff, gen_suff) in enumerate(suffixes):
         dec_field = dec_var + dec_suff
         gen_field = dec_var + gen_suff
+        if mask_var is None:
+            mask_dec_field = dec_field
+            mask_gen_field = gen_field
+        else:
+            mask_dec_field = mask_var + dec_suff
+            mask_gen_field = mask_var + gen_suff
+        print(mask_dec_field, mask_gen_field)
         if mask_func is not None:
-            dec_mask = mask_func(data[dec_field])
-            gen_mask = mask_func(data[gen_field])
+            dec_mask = mask_func(data[mask_dec_field])
+            gen_mask = mask_func(data[mask_gen_field])
         else:
             dec_mask = None
             gen_mask = None
@@ -602,6 +726,47 @@ def _estimate_params(pop, cond, est, scaler, splitter, folds_n,
         coefs[i, :pred.shape[1]] = coefs_i
         coefs[i, pred.shape[1]:] = np.nan
     return coefs, resids, r2s
+
+def fit_simple_linear_models(pops, conds, model=sklm.LinearRegression,
+                             norm=True, pre_pca=None, time_ind=None,
+                             **model_kwargs):
+    """ conds is the same length as pops, and gives the feature values """
+    if time_ind is None:
+        pops = list(mraux.accumulate_time(pop) for pop in pops)
+    else:
+        pops = list(pop[..., time_ind:time_ind+1] for pop in pops)
+
+    ohe = skp.OneHotEncoder(sparse=False)
+    ohe.fit(np.arange(len(conds)).reshape(-1, 1))
+    scaler = na.make_model_pipeline(norm=True, pca=pre_pca)
+    pops_full = np.concatenate(pops, axis=3)
+    lin_conds = list((tuple(ci),)*pops[i].shape[3]
+                     for i, ci in enumerate(conds))
+    nonlin_conds = list((tuple(ohe.transform([[i]])[0]),)*pops[i].shape[3]
+                        for i, ci in enumerate(conds))
+    lin_full = np.concatenate(lin_conds, axis=0)
+    lin_full = lin_full/np.sqrt(np.mean(np.sum(lin_full**2, axis=1)))
+    nonlin_full = np.concatenate(nonlin_conds, axis=0)
+    nonlin_full = nonlin_full/np.sqrt(np.mean(np.sum(nonlin_full**2, axis=1)))
+
+    cond_full = np.concatenate((lin_full, nonlin_full), axis=1)
+    n_pops, n_neurs = pops_full.shape[:2]
+    coeffs = np.zeros((n_pops, n_neurs, cond_full.shape[1]))
+    for i, pop in enumerate(pops_full):
+        pop = np.squeeze(pop)
+        if norm or pre_pca is not None:
+            pipe = na.make_model_pipeline(norm=norm, pca=pre_pca)
+            pop = pipe.fit_transform(pop.T).T
+        for j in range(pop.shape[0]):
+            m = model(fit_intercept=False)
+            # use_pop = skp.StandardScaler().fit_transform(pop[j])
+            print(cond_full.shape)
+            print(pop[j].shape)
+            m.fit(cond_full, pop[j])
+            coeffs[i, j] = m.coef_
+    u_conds = np.unique(cond_full, axis=0)
+    return u_conds, pop, coeffs
+
 
 rand_splitter = skms.ShuffleSplit
 def fit_linear_models(pops, conds, model=sklm.MultiTaskElasticNetCV, norm=True,
