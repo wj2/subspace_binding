@@ -7,6 +7,76 @@ import functools as ft
 import general.utility as u
 import general.plotting as gpl
 import composite_tangling.code_analysis as ca
+import multiple_representations.analysis as mra
+
+def plot_3d_fit(mus, ax=None, masks='time', colors=('r', 'g', 'b'),
+                cmap_name='PuOr'):
+    if ax is None:
+        f = plt.figure()
+        ax = f.add_subplot(1, 1, 1, projection='3d')
+
+    cmap = plt.get_cmap(cmap_name)
+    p = skd.PCA(3)
+    mus_rep = p.fit_transform(mus)
+
+    if masks == 'time':
+        pos_o1 = np.array([2, 4, 7, 8]) - 1
+        neg_o1 = np.array([1, 3, 5, 6]) - 1
+        
+        pos_o2 = np.array([3, 4, 6, 8]) - 1
+        neg_o2 = np.array([1, 2, 5, 7]) - 1
+        
+        pos_side = np.array([5, 7, 8, 6]) - 1
+        neg_side = np.array([1, 2, 4, 3]) - 1
+        
+        pns = ((pos_o1, neg_o1), (pos_o2, neg_o2), (pos_side, neg_side))
+
+        high = np.array([3, 6]) - 1
+        equal = np.array([1, 4, 5, 8]) - 1
+        low = np.array([2, 7]) - 1
+        label = 'epoch {}'
+        flip = 'side'
+    if masks == 'space':
+        pos_left = np.array([2, 4, 6, 8]) - 1
+        neg_left = np.array([1, 3, 5, 7]) - 1
+        
+        pos_right = np.array([3, 4, 7, 8]) - 1
+        neg_right = np.array([1, 2, 5, 6]) - 1
+        
+        pos_epoch = np.array([5, 6, 8, 7]) - 1
+        neg_epoch = np.array([1, 2, 4, 3]) - 1
+
+        pns = ((pos_left, neg_left), (pos_right, neg_right), (pos_epoch, neg_epoch))
+
+        high = np.array([3, 7]) - 1
+        equal = np.array([1, 4, 5, 8]) - 1
+        low = np.array([2, 6]) - 1
+        label = 'side {}'
+        flip = 'epoch'
+    # out = mra.compute_within_across_corr(mus, masks)
+    out = None
+    for i, (pos, neg) in enumerate(pns):
+        rep_mask = np.stack((mus_rep[pos], mus_rep[neg]), axis=1)
+        for j, line in enumerate(rep_mask):
+            if j == 0:
+                if i < 2:
+                    label_str = label.format(i + 1)
+                else:
+                    label_str = flip
+            else:
+                label_str = ''
+            l = ax.plot(*line.T, color=colors[i],
+                        label=label_str)
+    ax.plot(*mus_rep[high].T, 'o', color=cmap(.99), ms=20,
+            label=label.format(1) + ' higher')
+    ax.plot(*mus_rep[equal].T, 'o', color=cmap(.5), ms=20, label='neutral')
+    ax.plot(*mus_rep[low].T, 'o', color=cmap(0), ms=20,
+            label=label.format(2) + ' higher')
+    ax.legend(frameon=False)
+    ax.set_xlabel('PC1')
+    ax.set_ylabel('PC2')
+    ax.set_zlabel('PC3')
+    return ax, out
 
 def plot_lin_nonlin_schem(line_pts=2, sep_dist=.5, val_dist=1, nonlin_dist=.2,
                           ax=None, fwid=5, lin1_col=(.1, .5, .1),

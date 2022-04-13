@@ -3,6 +3,7 @@ import os
 import numpy as np
 import pandas as pd
 import scipy.io as sio
+import re
 from one.api import One
 
 bhv_fields_rename = {'trials.included':'include',
@@ -12,6 +13,28 @@ bhv_fields_rename = {'trials.included':'include',
                      'trials.response_times':'respTime',
                      'trials.response_choice':'choice',
                      'trials.feedbackType':'feedback'}
+
+def resave_mats(folder, mat_templ='.*\.mat'):
+    fls = os.listdir(folder)
+    for fl in fls:
+        m = re.match(mat_templ, fl)
+        if m is not None:
+            new_data = {}
+            data = sio.loadmat(os.path.join(folder, fl))
+            for k in data.keys():
+                if k[0] != '_':
+                    names = data[k].dtype.names
+                    if names is not None:
+                        new_names = list(n.replace(' ', '_')
+                                         for n in names)
+                        new_names = list(n.replace('-', 'X')
+                                         for n in names)
+                        data[k].dtype.names = new_names
+                    new_data[k] = data[k]
+            try:
+                sio.savemat(os.path.join(folder, 're_' + fl), new_data)
+            except:
+                print(new_data)
 
 def accumulate_time(pop, keepdim=True, ax=1):
     out = np.concatenate(list(pop[..., i] for i in range(pop.shape[-1])),
@@ -72,7 +95,7 @@ def load_steinmetz_data(folder, bhv_fields=bhv_fields_rename,
         spks_cont, unique_neurs = split_spks_bhv(c_ident, ts, trl_start, trl_end,
                                                  extra)
         loc_list = chan_loc['allen_ontology'].to_numpy()
-        regions = loc_list[c_channel[unique_neurs].astype(int)]
+        regions = loc_list[c_channel[unique_neurs].astype(int) - 1]
         session_dict['spikeTimes'] = list(n for n in spks_cont)
         session_dict['neur_regions'] = (regions,)*len(spks_cont)
         df_i = pd.DataFrame.from_dict(session_dict)

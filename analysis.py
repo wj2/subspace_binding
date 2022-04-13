@@ -15,20 +15,33 @@ import general.data_io as gio
 import multiple_representations.theory as mrt
 import multiple_representations.auxiliary as mraux
 
+visual_regions = ('VISp', 'VISI', 'VISpm', 'VISam', 'VISrl', 'VISa')
+choice_regions = ('MOs', 'PL', 'ILA', 'ORB', 'MOp', 'SSp', 'SCm', 'MRN')
+
+def _gen_pops(c1_list, c2_list, pop, all_cons=True):
+    if all_cons:
+        u_cons = np.unique(np.concatenate((c1_list, c2_list)))
+        for con in u_cons:
+            c1_mask = c1_list == con
+            c2_mask = c2_list == con
+            c1_con_list = c1_list[c2_mask]
+            c2_con_list = c2_list[c1_mask]
+            pop1 = pop[c2_mask]
+            pop2 = pop[c1_mask]
+            yield (c1_con_list, c2_con_list, pop1, pop2)
+    else:
+        yield (c1_list, c2_list, pop, pop)    
+
 def contrast_regression(data, tbeg, tend, binsize=None, binstep=None,
                         include_field='include',
                         contrast_left='contrastLeft',
                         contrast_right='contrastRight', regions=None,
                         tz_field='stimOn', model=sklm.Ridge, norm=True,
-                        pca=None, t_ind=0, cache=True):
+                        pca=None, t_ind=0, cache=True, fix_con_mask=True,
+                        n_cv=10):
     if binsize is None:
         binsize = tend - tbeg
-    pre_pipe_steps = []
-    if norm:
-        pre_pipe_steps.append(skp.StandardScaler())
-    if pca is not None:
-        pre_pipe_steps.append(skd.PCA(pca))
-    pre_pipe = sklpipe.make_pipeline(*pre_pipe_steps)
+    dec_pipe = na.make_model_pipeline(model, norm=norm, pca=pca)
 
     inc_mask = data[include_field] == 1
     d, pops, xs = data.mask_population(inc_mask, binsize, tbeg, tend,
@@ -44,23 +57,30 @@ def contrast_regression(data, tbeg, tend, binsize=None, binstep=None,
     for i, pop_i in enumerate(pops):
         c_l_i = c_left[i]
         c_r_i = c_right[i]
+        pop_i = pop_i[..., t_ind]
+        data_generator = _gen_pops(c_l_i, c_r_i, pop_i,
+                                   all_cons=fix_con_mask)
+        for (c_l_i, c_r_i, pop_i_l, pop_i_r) in data_generator:
+            if (pop_i.shape[1] > 0 and pop_i_l.shape[0] > n_cv*2
+                and pop_i_r.shape[0] > n_cv*2):
 
-        pop_pre_i = pre_pipe.fit_transform(pop_i[..., t_ind])
-        score_l = skms.cross_validate(model(), pop_pre_i, c_l_i,
-                                      return_estimator=True)
-        score_r = skms.cross_validate(model(), pop_pre_i, c_r_i,
-                                      return_estimator=True)
-        coefs_l = np.array(list(e.coef_ for e in score_l['estimator']))
-        coefs_r = np.array(list(e.coef_ for e in score_r['estimator']))
-        wi_angs_l = u.pairwise_cosine_similarity(coefs_l)
-        wi_angs_r = u.pairwise_cosine_similarity(coefs_r)
-        ac_angs_lr = u.pairwise_cosine_similarity(coefs_l, coefs_r)
+                score_l = skms.cross_validate(dec_pipe, pop_i_l, c_l_i,
+                                              return_estimator=True, cv=n_cv)
+                score_r = skms.cross_validate(dec_pipe, pop_i_r, c_r_i,
+                                              return_estimator=True, cv=n_cv)
+                coefs_l = np.array(list(e.steps[-1][1].coef_
+                                        for e in score_l['estimator']))
+                coefs_r = np.array(list(e.steps[-1][1].coef_
+                                        for e in score_r['estimator']))
+                wi_angs_l = u.pairwise_cosine_similarity(coefs_l)
+                wi_angs_r = u.pairwise_cosine_similarity(coefs_r)
+                ac_angs_lr = u.pairwise_cosine_similarity(coefs_l, coefs_r)
 
-        scores_left.append(score_l)
-        scores_right.append(score_r)
-        wi_angs.append((wi_angs_l, wi_angs_r))
-        ac_angs.append(ac_angs_lr)
-    return scores_left, scores_right, wi_angs, ac_angs
+                scores_left.append(score_l['test_score'])
+                scores_right.append(score_r['test_score'])
+                wi_angs.append((wi_angs_l, wi_angs_r))
+                ac_angs.append(ac_angs_lr)
+    return np.array(scores_left), np.array(scores_right), wi_angs, ac_angs
 
 def regression_cv(pops, rts, model=sklm.Ridge, norm=True, pca=.95):
     pipe = na.make_model_pipeline(model, norm=norm, pca=pca)
@@ -481,6 +501,94 @@ def binding_analysis(data, tbeg, tend, feat1, feat2,
                           **kwargs)
         outs[i] = out[0]
     return outs, xs
+
+def compute_within_across_corr(mus, masks):
+    vecs = []
+    for mask in masks:
+        vecs.append(mus[mask] - mus[~mask])
+    ang_dict = {}
+    for (i, j) in it.product(range(len(vecs)), repeat=2):
+        if i == j:
+            angs = u.pairwise_cosine_similarity(vecs[i])
+        else:
+            angs = u.pairwise_cosine_similarity(vecs[i], vecs[j])
+        ang_dict[(i, j)] = angs
+    return ang_dict
+
+def nearest_decoder_epoch_two(data, dec1_field, dec2_field,
+                              dead_perc=20, use_split_dec=None,
+                              min_trials=40, tzf='Offer 2 on',
+                              include_opt_choice=False, choice_field='subj_ev',
+                              **kwargs):
+    left_mask = data['side of offer 1 (Left = 1 Right =0)'] == 1
+    right_mask = data['side of offer 1 (Left = 1 Right =0)'] == 0
+    out = _compute_masks(data, dec1_field, dec2_field, dead_perc=dead_perc,
+                         use_split_dec=use_split_dec)
+    mask_1hv, mask_1lv, mask_2hv, mask_2lv = out
+    
+    left_1hv_2hv = mask_1hv.rs_and(left_mask).rs_and(mask_2hv)
+    left_1hv_2lv = mask_1hv.rs_and(left_mask).rs_and(mask_2lv)
+    left_1lv_2hv = mask_1lv.rs_and(left_mask).rs_and(mask_2hv)
+    left_1lv_2lv = mask_1lv.rs_and(left_mask).rs_and(mask_2lv)
+
+    right_1hv_2hv = mask_1hv.rs_and(right_mask).rs_and(mask_2hv)
+    right_1hv_2lv = mask_1hv.rs_and(right_mask).rs_and(mask_2lv)
+    right_1lv_2hv = mask_1lv.rs_and(right_mask).rs_and(mask_2hv)
+    right_1lv_2lv = mask_1lv.rs_and(right_mask).rs_and(mask_2lv)
+    
+    masks = (left_1hv_2hv, left_1hv_2lv, left_1lv_2hv, left_1lv_2lv,
+             right_1hv_2hv, right_1hv_2lv, right_1lv_2hv, right_1lv_2lv)
+    if include_opt_choice:
+        c_field = choice_field + '_chosen'
+        uc_field = choice_field + '_unchosen'
+        opt_mask = data[c_field] >= data[uc_field]
+        nonopt_mask = data[c_field] < data[uc_field]
+        masks_optchoice = []
+        masks_nonoptchoice = []
+        for mask in masks:
+            masks_optchoice.append(mask.rs_and(opt_mask))
+            masks_nonoptchoice.append(mask.rs_and(nonopt_mask))
+        masks = masks_optchoice + masks_nonoptchoice
+    return nearest_decoder_epochs(data, masks, min_trials=min_trials, tzf=tzf,
+                                  **kwargs)
+
+def nearest_decoder_epoch_one(data, dec_field, dead_perc=20, use_split_dec=None,
+                              min_trials=80, tzf='Offer 1 on',  **kwargs):
+    left_mask = data['side of offer 1 (Left = 1 Right =0)'] == 1
+    right_mask = data['side of offer 1 (Left = 1 Right =0)'] == 0
+    out = _compute_masks(data, dec_field, dec_field, dead_perc=dead_perc,
+                         use_split_dec=use_split_dec)
+    mask_hv, mask_lv, _, _ = out
+    left_hv = mask_hv.rs_and(left_mask)
+    left_lv = mask_lv.rs_and(left_mask)
+    right_hv = mask_hv.rs_and(right_mask)
+    right_lv = mask_lv.rs_and(right_mask)
+
+    masks = (left_hv, left_lv, right_hv, right_lv)
+    return nearest_decoder_epochs(data, masks, min_trials=min_trials,
+                                  tzf=tzf, **kwargs)
+
+
+def nearest_decoder_epochs(data, masks, tbeg=100, tend=1000,
+                           winsize=300, tstep=300, pop_resamples=20,
+                           tzf='Offer 2 on', min_trials=80, 
+                           regions=None, cv_runs=20, **kwargs):
+
+    print(tzf)
+    out = data.make_pseudo_pops(winsize, tbeg, tend, tstep, *masks,
+                                tzfs=(tzf,)*len(masks),
+                                min_trials=min_trials,
+                                resamples=pop_resamples)
+    xs, cond_pops = out
+    print(cond_pops[0].shape)
+    dec_perf = np.zeros((pop_resamples, cv_runs, len(xs)))
+    dec_info = np.zeros((pop_resamples, len(xs)), dtype=object)
+    for i in range(pop_resamples):
+        use_pops = list(cp[i] for cp in cond_pops)
+        out = na.nearest_decoder(*use_pops, norm=True, cv_runs=cv_runs,
+                                 **kwargs)
+        dec_perf[i], dec_info[i] = out
+    return xs, dec_perf, dec_info
     
 
 def generalization_analysis(data, tbeg, tend, dec_field, gen_field,
