@@ -14,6 +14,17 @@ bhv_fields_rename = {'trials.included':'include',
                      'trials.response_choice':'choice',
                      'trials.feedbackType':'feedback'}
 
+def save_model_fits(fit_dict, output_folder):
+    os.mkdir(output_folder)
+    for key, item in fit_dict.items():
+        for i, fit in enumerate(item[1]):
+            new_path = os.path.join(output_folder, 'azf_{}.nc')
+            fit.to_netcdf(new_path)
+            item[1][i] = new_path
+    d_path = os.path.join(output_folder, 'fit_dict.pkl')
+    pickle.dump(fit_dict, open(d_path, 'wb'))
+    return fit_dict
+
 def resave_mats(folder, mat_templ='.*\.mat'):
     fls = os.listdir(folder)
     for fl in fls:

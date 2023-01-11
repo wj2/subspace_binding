@@ -3,12 +3,336 @@ import numpy as np
 import sklearn.decomposition as skd
 import matplotlib.pyplot as plt
 import functools as ft
+import scipy.io as sio
 
 import general.utility as u
 import general.plotting as gpl
 import composite_tangling.code_analysis as ca
 import multiple_representations.analysis as mra
+import multiple_representations.theory as mrt
 
+def plot_gp_fits(models, feats, acts, n_dims=10, axs=None, fwid=3, ppop_ind=0,
+                 sig_te=None):
+    if axs is None:
+        f, axs = plt.subplots(n_dims, 1, figsize=(fwid, n_dims*fwid))
+    f_i = feats[ppop_ind]
+    for di in range(n_dims):
+        ax = axs[di]
+        if sig_te is not None and sig_te[ppop_ind, 0, di] > 0:
+            ax.set_ylabel('*')
+        
+        m_ijk = models[ppop_ind, 0, di]
+        a_ik = acts[ppop_ind, :, di]
+        u_fs = np.unique(f_i[:, 1])
+        act_mus = list(a_ik[f_i[:, 1] == uf] for uf in u_fs)
+
+        mask1 = f_i[:, 0] == 0
+        act1_mus = list(a_ik[np.logical_and(mask1, f_i[:, 1] == uf)]
+                        for uf in u_fs)
+        mask2 = f_i[:, 0] == 1
+        act2_mus = list(a_ik[np.logical_and(mask2, f_i[:, 1] == uf)] 
+                        for uf in u_fs)
+
+        gp1_mus = list(m_ijk.predict(np.array([[0, uf]])) for uf in u_fs)
+        gp2_mus = list(m_ijk.predict(np.array([[1, uf]])) for uf in u_fs)
+
+        gpl.plot_trace_werr(u_fs, act_mus, jagged=True, ax=ax)
+        l1 = gpl.plot_trace_werr(u_fs, act1_mus, jagged=True, ax=ax)
+        l2 = gpl.plot_trace_werr(u_fs, act2_mus, jagged=True, ax=ax)
+
+        ax.plot(u_fs, gp1_mus, color=l1[0].get_color(), ls='dashed')
+        ax.plot(u_fs, gp1_mus, color='k', ls='dashed')
+        ax.plot(u_fs, gp2_mus, color=l2[0].get_color(), ls='dashed')
+    return axs
+
+lin_color = np.array((254, 189, 42))/255
+conj_color = np.array((161, 27, 155))/255
+both_color = np.array((45, 113, 142))/255
+
+nonother_div_dict = {
+    'space':('subj_ev_left-subj_ev_right',
+             'subj_ev_right-subj_ev_left'),
+    # 'space 1':('subj_ev_left-subj_ev_right',),
+    # 'space 2':('subj_ev_right-subj_ev_left',),
+    'time':('subj_ev offer 1-subj_ev offer 2',
+            'subj_ev offer 2-subj_ev offer 1'),
+}
+timeonly_div_dict = {
+    'left offer':('subj_ev_left-subj_ev_left-1',),
+    'right offer':('subj_ev_right-subj_ev_right-2',)
+}
+sideonly_div_dict = {
+    'offer 1':('subj_ev_left-subj_ev_right-0',
+               'subj_ev_right-subj_ev_left-0'),
+    'offer 2':('subj_ev_left-subj_ev_right-3',
+               'subj_ev_right-subj_ev_left-3')
+}
+sidetime_div_dict = {
+    'offer 1':('subj_ev_left-subj_ev_right-1',
+               'subj_ev_right-subj_ev_left-1'),
+    'offer 2':('subj_ev_left-subj_ev_right-2',
+               'subj_ev_right-subj_ev_left-2')
+}
+full_div_dict = {
+    'time only':timeonly_div_dict,
+    'side only':sideonly_div_dict,
+    'side-time':sidetime_div_dict,
+    'non other':nonother_div_dict,    
+}
+def plot_distances(path,
+                   div_dict=full_div_dict,
+                   use_other=True,
+                   other_key='side only',
+                   region_order=('OFC', 'PCC', 'pgACC', 'VS', 'vmPFC', 'all'),
+                   minor_move=.1, 
+                   lin_color=lin_color,
+                   conj_color=conj_color,
+                   both_color=both_color,
+                   lin_label='linear', conj_label='mixed',
+                   both_label='both', axs=None, fwid=3):
+    if use_other:
+        div_dict = div_dict[other_key]
+    else:
+        div_dict = div_dict['non other']
+    if axs is None:
+        n_panels = len(div_dict)
+        f, axs = plt.subplots(1, n_panels, figsize=(fwid*n_panels, fwid),
+                              sharex=True, sharey=True)
+    data = sio.loadmat(path)
+    print(data['OFC'].dtype)
+    for i, (div_name, dks) in enumerate(div_dict.items()):
+        for j, region in enumerate(region_order):
+            dl, dn, sig, sem = [], [], [], []
+            for dk in dks:
+                
+                res = data[region][dk][0, 0]
+                if len(res.dtype) > 0:
+                    dl.append(np.mean(res['d_l'][0, 0], axis=1, keepdims=True))
+                    dn.append(np.mean(res['d_n'][0, 0], axis=1, keepdims=True))
+                    sig.append(np.mean(res['sigma'][0, 0], axis=1, keepdims=True))
+                    sem.append(np.mean(res['sem'][0, 0], axis=1, keepdims=True))
+            dl = np.mean(dl, axis=0)
+            dn = np.mean(dn, axis=0)
+            sig = np.mean(sig, axis=0)
+            sem = np.mean(sem, axis=0)
+            
+            gpl.plot_trace_werr([j - minor_move/2], dl, ax=axs[i],
+                                color=lin_color, conf95=True, points=True,
+                                errorbar=True, elinewidth=3)
+            gpl.plot_trace_werr([j + minor_move/2], dn, ax=axs[i],
+                                color=conj_color, conf95=True, points=True,
+                                errorbar=True, elinewidth=3)
+            # gpl.plot_trace_werr([j + minor_move/2], sem, ax=axs[i],
+            #                     color=conj_color, conf95=True, points=True,
+            #                     errorbar=True, elinewidth=3)
+        axs[i].set_xticks(range(len(region_order)))
+        axs[i].set_xticklabels(region_order, rotation=45)
+        gpl.clean_plot(axs[i], i)
+    axs[0].set_yticks([0, 1, 2])
+    gpl.set_ylim(axs[0], low=0)
+    axs[0].set_ylabel('estimated distance')
+    return f, axs
+
+# def plot_correlations(path, epoch_order=('E1_E', 'E1_M', 'E2_E', 'E2_M'),
+#                       epoch_compare=(('E1_{}', 'E1_{}'), ('E2_{}', 'E2_{}'),
+#                                      ('E1_{}', 'E2_{}'))
+#                       epoch_names=('within offer 1', 'within offer 2',
+#                                    'across offer 1 and 2'),
+#                       axs=None, fwid=3, epochs_out=None,
+#                       region_order=('OFC', 'PCC', 'pgACC', 'VS', 'vmPFC'),
+#                       minor_move=.18, bar_width=.2,
+#                       use_time='E',
+#                       **kwargs):
+#     if axs is None:
+#         f, axs = plt.subplots(1, 1,
+#                               figsize=(fwid, fwid*.8),
+#                               sharex=True, sharey=True)
+    
+#     if epochs_out is None:
+#         epochs_out = {}
+#         for epoch in epoch_order:
+#             left_val = mra.apply_coeff_func(path, mra.get_left_val_samples,
+#                                             **kwargs)
+#             right_val = mra.apply_coeff_func(path, mra.get_right_val_samples,
+#                                              **kwargs)
+#             epochs_out[epoch] = (left_val, right_val)
+#     for i, epoch in enumerate(epoch_order):
+#         lin, conj, both = epochs_out[epoch]
+#         for j, region in enumerate(region_order):
+#             lin_reg = np.array(list(np.nanmean(x) for x in lin[region]))
+#             conj_reg = np.array(list(np.nanmean(x) for x in conj[region]))
+#             both_reg = np.array(list(np.nanmean(x) for x in both[region]))
+#             b = minor_move*len(lin_reg)
+#             xs = np.linspace(-b/2, b/2, len(lin_reg)) + j
+            
+#             l_lin = axs[i].bar(xs, lin_reg, width=bar_width, color=lin_color,
+#                                 label=lin_label)
+#             l_con = axs[i].bar(xs, conj_reg, bottom=lin_reg, width=bar_width,
+#                                color=conj_color, label=conj_label)
+#             l_bot = axs[i].bar(xs, both_reg,
+#                                 bottom=lin_reg + conj_reg, width=bar_width,
+#                                 color=both_color, label=both_label)
+#         axs[i].set_xticks(np.arange(len(region_order)))
+#         axs[i].set_xticklabels(region_order, rotation=60)
+#         axs[i].set_title(epoch_names[i])
+#         gpl.clean_plot(axs[i], i)
+#     axs[-1].legend(handles=(l_lin, l_con, l_bot), frameon=False)
+#     axs[0].set_ylabel('proportion of\nneurons')
+#     return epochs_out, (f, axs)
+    
+def visualize_regr_means(p1, p2, ax=None, fwid=3, skip=1,
+                         grey_color=(.7, .7, .7), alpha=.5,
+                         vis=None, pop_ind=0):
+    if ax is None:
+        f = plt.figure(figsize=(fwid, fwid))
+        ax = f.add_subplot(1, 1, 1, projection='3d')
+
+    pts = np.concatenate((p1, p2), axis=1)
+    mask = np.all(~np.isnan(pts), axis=1)
+    p = skd.PCA()
+    p.fit(pts[mask].T)
+    p1_low = p.transform(p1[mask].T)
+    p2_low = p.transform(p2[mask].T)
+
+    for i in range(0, len(p1_low), skip):
+        ax.plot([p1_low[i, 0], p2_low[i, 0]],
+                [p1_low[i, 1], p2_low[i, 1]],
+                [p1_low[i, 2], p2_low[i, 2]],
+                color=grey_color, alpha=alpha)
+        
+    ax.plot(p1_low[:, 0], p1_low[:, 1], p1_low[:, 2])
+    ax.plot(p2_low[:, 0], p2_low[:, 1], p2_low[:, 2])
+    if vis is not None:
+        if vis.shape[1] > p.n_features_:
+            vis = vis[:, mask]
+        v_low = p.transform(vis)
+        ax.plot(v_low[:, 0], v_low[:, 1], v_low[:, 2], 'o')
+                           
+                
+def plot_selectivity_type(path, epoch_order=('E1_E', 'E1_M', 'E2_E', 'E2_M'),
+                          epoch_names=('offer 1 on', 'offer 1 delay',
+                                       'offer 2 on', 'offer 2 delay'),
+                          axs=None, fwid=3, epochs_out=None,
+                          region_order=('OFC', 'PCC', 'pgACC', 'VS', 'vmPFC'),
+                          minor_move=.18, bar_width=.2,
+                          lin_color=lin_color,
+                          conj_color=conj_color,
+                          both_color=both_color,
+                          lin_label='linear', conj_label='mixed',
+                          both_label='both',
+                          **kwargs):
+    if axs is None:
+        f, axs = plt.subplots(1, len(epoch_order),
+                              figsize=(fwid*len(epoch_order), fwid*.8),
+                              sharex=True, sharey=True)
+    if epochs_out is None:
+        epochs_out = {}
+        for epoch in epoch_order:
+            lin = mra.apply_coeff_func(path, mra.get_lin_select, **kwargs)
+            conj = mra.apply_coeff_func(path, mra.get_conj_select, **kwargs)
+            both = mra.apply_coeff_func(path, mra.get_mult_select, **kwargs)        
+            epochs_out[epoch] = (lin, conj, both)
+    for i, epoch in enumerate(epoch_order):
+        lin, conj, both = epochs_out[epoch]
+        for j, region in enumerate(region_order):
+            lin_reg = np.array(list(np.nanmean(x) for x in lin[region]))
+            conj_reg = np.array(list(np.nanmean(x) for x in conj[region]))
+            both_reg = np.array(list(np.nanmean(x) for x in both[region]))
+            b = minor_move*len(lin_reg)
+            xs = np.linspace(-b/2, b/2, len(lin_reg)) + j
+            
+            l_lin = axs[i].bar(xs, lin_reg, width=bar_width, color=lin_color,
+                                label=lin_label)
+            l_con = axs[i].bar(xs, conj_reg, bottom=lin_reg, width=bar_width,
+                               color=conj_color, label=conj_label)
+            l_bot = axs[i].bar(xs, both_reg,
+                                bottom=lin_reg + conj_reg, width=bar_width,
+                                color=both_color, label=both_label)
+        axs[i].set_xticks(np.arange(len(region_order)))
+        axs[i].set_xticklabels(region_order, rotation=60)
+        axs[i].set_title(epoch_names[i])
+        gpl.clean_plot(axs[i], i)
+    axs[-1].legend(handles=(l_lin, l_con, l_bot), frameon=False)
+    axs[0].set_ylabel('proportion of\nneurons')
+    return epochs_out, (f, axs)
+    
+def plot_dists(x, pred_vals, 
+               ax=None, fwid=3,
+               minor_move=.18, bar_width=.2,
+               lin_color=np.array((254, 189, 42))/255,
+               conj_color=np.array((161, 27, 155))/255,
+               both_color=np.array((45, 113, 142))/255,
+               lin_label='linear', conj_label='nonlinear',
+               both_label='both',
+               **kwargs):
+    if ax is None:
+        f, ax = plt.subplots(1, 1,
+                              figsize=(fwid, fwid))
+    sigma = pred_vals['sigma'][0, 0]
+    dl = pred_vals['d_l'][0, 0]
+    dn = pred_vals['d_n'][0, 0]
+    dl_mu = np.mean(dl)
+    dn_mu = np.mean(dn)
+    dl_std = np.std(dl)
+    dn_std = np.std(dn)
+    total_dist_mu = np.mean(dl + dn)
+    xs = np.array([x])
+    l_lin = ax.bar(xs, dl_mu/total_dist_mu, width=bar_width, color=lin_color,
+                   label=lin_label)
+    l_con = ax.bar(xs, dn_mu/total_dist_mu, bottom=dl_mu/total_dist_mu,
+                   width=bar_width,
+                   color=conj_color, label=conj_label)
+    # l_bot = ax.bar(xs, both_reg,
+    #                    bottom=lin_reg + conj_reg, width=bar_width,
+    #                    color=both_color, label=both_label)
+    return l_lin, l_con
+
+def plot_data_pred(pred_vals, dec_vals, n_feats=2, n_vals=2, axs=None,
+                   color=None, line_alpha=.2, label=''):
+    if axs is None:
+        f, axs = plt.subplots(1, 3)
+    (ax_gen, ax_bin, ax_comb) = axs
+
+    dl = np.mean(pred_vals['d_l'][0, 0], axis=1)
+    dn = np.mean(pred_vals['d_n'][0, 0], axis=1)
+    sem = np.mean(pred_vals['sem'][0, 0], axis=1)
+    p_ccgp = np.mean(pred_vals['pred_ccgp'][0, 0], axis=1, keepdims=True)
+    p_bind = np.mean(pred_vals['pred_bin'][0, 0], axis=1, keepdims=True)
+
+    dec_gen = np.mean(dec_vals['gen'][0, 0][..., -1], axis=1, keepdims=True)
+    
+    sigma = np.mean(pred_vals['sigma'][0, 0], axis=1)
+    pwr = np.mean(dl**2 + dn**2)
+    ts = np.linspace(.01, 1, 100)
+    sigma_m = np.mean(sigma)
+    r1, gen_err = mrt.vector_corr_ccgp(pwr, ts, sigma=sigma_m, sem=sem)
+    r1, bin_err = mrt.vector_corr_swap(pwr, n_feats, n_vals,  ts, sigma=sigma_m,
+                                       sem=sem)
+    l = ax_gen.plot(r1, gen_err, color=color, alpha=line_alpha)
+    color = l[0].get_color()
+    ax_bin.plot(r1, bin_err, color=color, alpha=line_alpha)
+    
+    r_emp = np.expand_dims(dl**2/(dn**2 + dl**2 + sem**2), 1)
+    
+    # ax_gen.plot(r_emp, 1 - p_ccgp, 'o', color=color)
+    gpl.plot_trace_werr(r_emp, 1 - p_ccgp, color=color, conf95=True, fill=False,
+                        points=True, ax=ax_gen, label=label)
+    # ax_gen.plot(r_emp, 1 - dec_gen, 'o', color=color)
+    gpl.plot_trace_werr(r_emp, 1 - dec_gen, color='k', ms=3, conf95=True, fill=False,
+                        points=True, ax=ax_gen)
+    gpl.plot_trace_werr(r_emp, 1 - dec_gen, color=color, conf95=True, fill=False,
+                        points=True, ax=ax_gen)
+    
+    gpl.plot_trace_werr(r_emp, 1 - p_bind, color=color, conf95=True, fill=False,
+                        points=True, ax=ax_bin)
+    # ax_bin.plot(r_emp, 1 - p_bind, 'o', color=color)
+    ax_comb.plot(gen_err, bin_err, color=color, alpha=line_alpha)
+    gpl.plot_trace_werr(1 - p_ccgp, 1 - p_bind, color=color, conf95=True,
+                        fill=False, points=True, ax=ax_comb)
+    # ax_comb.set_xscale('log')
+    # ax_comb.set_yscale('log')
+    ax_gen.legend(frameon=False)
+    
 def plot_3d_fit(mus, ax=None, masks='time', colors=('r', 'g', 'b'),
                 cmap_name='PuOr'):
     if ax is None:
@@ -53,8 +377,8 @@ def plot_3d_fit(mus, ax=None, masks='time', colors=('r', 'g', 'b'),
         low = np.array([2, 6]) - 1
         label = 'side {}'
         flip = 'epoch'
-    # out = mra.compute_within_across_corr(mus, masks)
-    out = None
+    out = mra.compute_within_across_corr(mus, np.array(pns))
+    # out = None
     for i, (pos, neg) in enumerate(pns):
         rep_mask = np.stack((mus_rep[pos], mus_rep[neg]), axis=1)
         for j, line in enumerate(rep_mask):

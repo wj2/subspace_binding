@@ -29,18 +29,19 @@ def pwr_range_corr(corr, pwrs, n_feats, n_vals, sigma=1, n_stim=2):
                                        sigma=sigma)[1]
     return out_bind, out_gen
 
-def vector_corr_ccgp(sum_d2, trades, sigma=1):
+def vector_corr_ccgp(sum_d2, trades, sigma=1, sem=0):
     dl = np.sqrt(sum_d2*trades)
     dn = np.sqrt(sum_d2*(1 - trades))
+    dn = np.sqrt(dn**2 + sem**2)
     r = dl**2/(dl**2 + dn**2)
     err = sts.norm(0, 1).cdf(-dl**2/(np.sqrt(dl**2 + dn**2)*2*sigma))
     return r, err
 
 def vector_corr_swap(sum_d2, n_feats, n_vals, trades, sigma=1,
-                     n_stim=2):
+                     n_stim=2, sem=0):
     dl = np.sqrt(trades*sum_d2)
     dn = np.sqrt((1 - trades)*sum_d2)
-    r = dl**2/(dl**2 + dn**2)
+    r = dl**2/(dl**2 + dn**2 + sem**2)
     supply_ds = (dl, dn)
     te, etypes = ca.compute_composite_hamming_theory(sum_d2, n_feats, n_vals,
                                                      supply_ds=supply_ds,

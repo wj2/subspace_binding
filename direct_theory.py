@@ -115,8 +115,8 @@ def direct_ccgp_bind_est_pops(train_pops, test_pops, n_folds=5, test_prop=.1,
     n_pops = len(train_pops[0])
     bind_ests = np.zeros((n_pops, n_folds))
     gen_ests = np.zeros_like(bind_ests)
-    d_l, d_n, sigma = list(np.zeros_like(bind_ests)
-                           for i in range(3))
+    d_l, d_n, sigma, sem = list(np.zeros_like(bind_ests)
+                                for i in range(4))
     for i in range(n_pops):
         tr_ps = list(tp[i] for tp in train_pops)
         te_ps = list(tp[i] for tp in test_pops)
@@ -125,8 +125,8 @@ def direct_ccgp_bind_est_pops(train_pops, test_pops, n_folds=5, test_prop=.1,
         else:
             out = very_direct_ccgp(tr_ps, te_ps, n_folds=n_folds,
                                            test_prop=test_prop, **kwargs)
-        gen_ests[i], bind_ests[i], (d_l[i], d_n[i], sigma[i]) = out
-    return bind_ests, gen_ests, (d_l, d_n, sigma)
+        gen_ests[i], bind_ests[i], (d_l[i], d_n[i], sigma[i], sem[i]) = out
+    return bind_ests, gen_ests, (d_l, d_n, sigma, sem)
 
 def _preprocess(*pops, fit=True, norm=True, pre_pca=.99, pipe=None,
                 sigma_est=None, trl_ax=1, cent=None):
@@ -227,15 +227,24 @@ def _mech_ccgp(a_pops, b_pops, norm=True, pre_pca=.99, trl_ax=1, feat_ax=0,
     d_ll2 = .5*(np.sqrt(4*d_prod**2 + delt2**2) - delt2)
     d_ll = np.sqrt(d_ll2)
     d_lg = np.sqrt(d_ll2 + delt2)
-        
-    d_nn = np.sqrt(d_ll_n**2 - d_prod)
+
+    # d_ne = np.sqrt(d_ll_n**2 - d_prod)
+    d_ne = np.sqrt(d_ll_n*d_lg_n - d_prod)
     
     d_l = np.sqrt(d_prod)
-    d_n = d_nn
     sigma = np.sqrt(_est_noise(*(a_tr_i + b_tr_i), proj_ax=f1,
                                intercept=inter))
-    gen_err = _compute_ccgp(d_l, d_l, d_n, sigma)
-    bin_err = _compute_bind(d_n, sigma)
+    sem = _est_sem(*(a_tr_i + b_tr_i), sub_ax=f1)
+    
+    corrected_d_n = np.sqrt(d_ne**2 - sem**2)
+    if np.isnan(corrected_d_n):
+        corrected_d_n = 0
+    uncorrected_d_n = d_ne
+    # print('old dn {}\nnew dn {}'.format(d_ne, corrected_d_n))
+    # print(d_ne, sem)
+    # print('corr', d_l**2/(d_l**2 + corrected_d_n**2))
+    gen_err = _compute_ccgp(d_l, d_l, uncorrected_d_n, sigma)
+    bin_err = _compute_bind(corrected_d_n, sigma)
 
     if empirical:
         dists = np.array(_proj_pops(f1, *b_tr_i, intercept=inter))
@@ -244,7 +253,24 @@ def _mech_ccgp(a_pops, b_pops, norm=True, pre_pca=.99, trl_ax=1, feat_ax=0,
         err1 = sts.norm(0, 1).cdf(-(dists[0] - d_ll_n/2)/(sigma))
         err2 = sts.norm(0, 1).cdf((dists[1] - d_ll_n/2)/(sigma))
         gen_err = (err1 + err2)/2 
-    return gen_err, bin_err, (d_l, d_n, sigma)
+    return gen_err, bin_err, (d_l, corrected_d_n, sigma, sem)
+
+def _est_sem(*pops, sub_ax=None, mean=True):
+    ests = np.zeros(len(pops))
+    for i, pop in enumerate(pops):
+        n_dims, n_trls = pop.shape
+        v = np.var(pop, axis=1)
+        l_sem = np.sqrt(np.sum(v/n_trls))
+        
+        if sub_ax is not None:
+            sub_sem = np.var(np.sum(sub_ax*pop, axis=0))/n_trls
+            l_sem = np.sqrt(l_sem**2 - sub_sem)
+        ests[i] = l_sem
+    if mean:
+        full_est = np.sqrt(2)*np.mean(ests)
+    else:
+        full_est = np.sqrt(np.sum(ests**2))
+    return full_est
 
 def very_direct_ccgp(a_pops, b_pops, accumulate_time=True, norm=True, pre_pca=.99,
                      n_folds=2, trl_ax=1, feat_ax=0,

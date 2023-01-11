@@ -1,19 +1,28 @@
 
 import itertools as it
 import functools as ft
+import os
+import pickle
+
 import numpy as np
 import sklearn.preprocessing as skp
 import sklearn.linear_model as sklm
 import sklearn.svm as skc
 import sklearn.model_selection as skms
 import sklearn.metrics as skm
+import sklearn.decomposition as skd
 import scipy.stats as sts
+import scipy.io as sio
 
 import general.utility as u
 import general.neural_analysis as na
 import general.data_io as gio
+import general.stan_utility as  su
 import multiple_representations.theory as mrt
 import multiple_representations.auxiliary as mraux
+import rsatoolbox as rsa
+
+import oak.model_utils as mu
 
 visual_regions = ('VISp', 'VISI', 'VISpm', 'VISam', 'VISrl', 'VISa')
 choice_regions = ('MOs', 'PL', 'ILA', 'ORB', 'MOp', 'SSp', 'SCm', 'MRN')
@@ -358,6 +367,105 @@ def fit_simple_full_lms(cond_pop_pairs, model=sklm.LinearRegression,
         pop_outs.append((u_conds, pop_trs, m.coef_))
     return pop_outs
 
+def _get_coeff_masks(neur):
+    p_coeff = neur['pval'][0, 0][0, 0]['beta']
+    if p_coeff.shape[0] == 4:
+        lin_mask = np.array([True, True, False, False])
+        nl_mask = np.array([False, False, True, False])
+        p_val_mask = np.array([True, False, False, False])
+        p_space_mask = np.array([False, True, False, False])
+    elif p_coeff.shape[0] == 8:
+        p_val_mask = np.array([True, False, False, True, False, True, False,
+                               False])
+        p_space_mask = np.array([False, True, False, False, False, False, False,
+                                 False])
+        lin_mask = np.array([True, True, False, True, False, True, False, False])
+        nl_mask = np.array([False, False, True, False, True, False, True, False])
+    return lin_mask, nl_mask, (p_val_mask, p_space_mask)
+
+def _get_mask_sig(neur, mask, p_thr=.05):
+    ps = neur['pval'][0, 0][0, 0]
+    p_coeff = ps['beta']
+    return np.sum(p_coeff[mask] < p_thr)
+
+def get_mult_select(neur, p_thr=.05):
+    lin_mask, nl_mask, (p_val_m, p_space_m) = _get_coeff_masks(neur)
+    n_val_p = _get_mask_sig(neur, p_val_m, p_thr=p_thr)
+    n_space_p = _get_mask_sig(neur, p_space_m, p_thr=p_thr)
+    n_nl = _get_mask_sig(neur, nl_mask, p_thr=p_thr)
+    n_lin = _get_mask_sig(neur, lin_mask, p_thr=p_thr)
+
+    out_pre = (n_val_p > 0) + (n_space_p > 0) 
+    out = (out_pre > 0) and (n_nl > 0)
+    out = (n_lin > 0 ) and (n_nl > 0)
+    if (n_lin + n_nl) == 0:
+        out = np.nan
+    return out
+
+def get_lin_select(neur, p_thr=.05):
+    lin_mask, nl_mask, _ = _get_coeff_masks(neur)
+    n_lin = _get_mask_sig(neur, lin_mask, p_thr=p_thr)
+    n_nl = _get_mask_sig(neur, nl_mask, p_thr=p_thr)
+    out = (n_lin > 0) and (n_nl == 0)
+    if (n_lin + n_nl) == 0:
+        out = np.nan
+    return out
+
+
+def get_pure_select(neur, p_thr=.05):
+    lin_mask, nl_mask, (p_val_m, p_space_m) = _get_coeff_masks(neur)
+    n_val_p = _get_mask_sig(neur, p_val_m, p_thr=p_thr)
+    n_space_p = _get_mask_sig(neur, p_space_m, p_thr=p_thr)
+    n_nl = _get_mask_sig(neur, nl_mask, p_thr=p_thr)
+    n_lin = _get_mask_sig(neur, lin_mask, p_thr=p_thr)
+
+    out = np.logical_xor(n_val_p > 0, n_space_p > 0) and n_nl == 0
+    if (n_lin + n_nl) == 0:
+        out = np.nan
+    return out
+
+def get_lin_mix_select(neur, p_thr=.05):
+    lin_mask, nl_mask, (p_val_m, p_space_m) = _get_coeff_masks(neur)
+    n_val_p = _get_mask_sig(neur, p_val_m, p_thr=p_thr)
+    n_space_p = _get_mask_sig(neur, p_space_m, p_thr=p_thr)
+    n_nl = _get_mask_sig(neur, nl_mask, p_thr=p_thr)
+    n_lin = _get_mask_sig(neur, lin_mask, p_thr=p_thr)
+
+    out = np.logical_and(n_val_p > 0, n_space_p > 0) and n_nl == 0
+    if (n_lin + n_nl) == 0:
+        out = np.nan
+    return out
+
+def get_conj_select(neur, p_thr=.05):
+    lin_mask, nl_mask, _ = _get_coeff_masks(neur)
+    n_lin = _get_mask_sig(neur, lin_mask, p_thr=p_thr)
+    n_nl = _get_mask_sig(neur, nl_mask, p_thr=p_thr)
+
+    out = (n_lin == 0) and (n_nl > 0)
+    if (n_lin + n_nl) == 0:
+        out = np.nan
+    return out    
+
+def apply_coeff_func(path, func, regions=None, epoch='E1_E', model_version='md1',
+                     model_type='OLS', **kwargs):
+    x = sio.loadmat(path)
+    x = x[model_type]
+    if regions is None:
+        regions = x.dtype.names
+    out_dict = {}
+    for region in regions:
+        y = x[region][0, 0][0]
+        out_dict[region] = []
+        for i, y_i in enumerate(y):
+            neurs = y_i[0, 0]['full'][0]
+            out_dict[region].append(np.zeros(neurs.shape))
+            for j, neur in enumerate(neurs):
+                n_j = neur[0, 0]['model'][epoch][0, 0]['models'][0, 0]
+                n_j = n_j[model_version][0, 0]
+                out_dict[region][i][j] = func(n_j, **kwargs)
+    return out_dict
+            
+
 rand_splitter = skms.ShuffleSplit
 def fit_full_lms(cond_pop_pairs, model=sklm.MultiTaskElasticNetCV, norm=True,
                  pca=None, rand_splitter=rand_splitter, test_prop=None,
@@ -389,6 +497,422 @@ def fit_full_lms(cond_pop_pairs, model=sklm.MultiTaskElasticNetCV, norm=True,
                                          keep_keys=keep_keys)
         pop_outs.append(out)
     return pop_outs
+
+def format_pops(*pops, accumulate_time=True, norm=True, pca=.95,
+                polynomial_value_degree=1, interaction=False,
+                make_one_hot=False):
+    feat_list = []
+    activity_list = []
+    for i, pop in enumerate(pops):
+        for j, pj in enumerate(pop):
+            if accumulate_time:
+                pj = np.concatenate(list(pj[..., k] for k in range(pj.shape[-1])),
+                                    axis=1)
+            pj = np.swapaxes(pj, 1, 3)
+            pj = pj[:, :, 0]
+            feat_shape = pj.shape[:2]
+            activity_list.append(pj)
+            fa = np.ones(feat_shape + (2,))
+            fa[..., 0] = fa[..., 0]*i
+            fa[..., 1] = fa[..., 1]*j
+            feat_list.append(fa)
+    feats = np.concatenate(feat_list, axis=1)
+    acts = np.concatenate(activity_list, axis=1)
+    act_pipe = na.make_model_pipeline(norm=norm, pca=pca,
+                                      post_norm=True)
+    feat_pipe = na.make_model_pipeline(norm=norm)
+    new_feats = []
+    for i, ppop in enumerate(feats):
+        pos_mask = np.array([True, False])
+        feats[i, :, ~pos_mask] = feat_pipe.fit_transform(ppop[:, ~pos_mask]).T
+        new_act = act_pipe.fit_transform(acts[i])
+        acts[i, :, :new_act.shape[1]] = new_act
+        acts[i, :, new_act.shape[1]:] = np.nan
+        new_feats.append(feats[i])
+        if make_one_hot:
+            ohe = skp.OneHotEncoder(sparse=False)
+            new_pos = ohe.fit_transform(new_feats[i][:, pos_mask])
+            new_feats[i] = np.concatenate((new_pos,
+                                           new_feats[i][:, ~pos_mask]),
+                                          axis=1)
+            pos_mask = np.array((True,)*new_pos.shape[1] + (False,))
+        if polynomial_value_degree > 1:
+            pf = skp.PolynomialFeatures(degree=polynomial_value_degree,
+                                        include_bias=False)
+            new_val = pf.fit_transform(new_feats[i][:, ~pos_mask])
+            pos = new_feats[i][:, pos_mask]
+            new_feats[i] = np.concatenate((pos, new_val),
+                                          axis=1)
+            pos_mask = np.concatenate((pos_mask[pos_mask],
+                                       np.zeros(new_val.shape[1], dtype=bool)))
+        if interaction:
+            val_inds = np.where(~pos_mask)[0]
+            for ind in np.where(pos_mask)[0]:
+                inter_feats = (new_feats[i][:, val_inds]
+                               *new_feats[i][:, ind:ind+1])
+                new_feats[i] = np.concatenate((new_feats[i], inter_feats),
+                                              axis=1)
+
+    feats = np.stack(new_feats, axis=0)
+    return feats, acts
+
+rand_splitter = skms.ShuffleSplit
+def fit_pseudo_lms(l_pops, r_pops, model=sklm.ElasticNet, norm=True,
+                   pca=None, shuffle=False, pre_pca=None, multi_task=True,
+                   interaction=True, make_one_hot=True,
+                   polynomial_value_degree=1,
+                   splitter=rand_splitter,
+                   use_kfold=False, 
+                   n_folds=20, leave_out=.05, **model_kwargs):
+    """ conds is the same length as pops, and gives the feature values """
+    feats, acts = format_pops(l_pops, r_pops, interaction=interaction,
+                              make_one_hot=make_one_hot,
+                              polynomial_value_degree=polynomial_value_degree)
+    models = np.zeros((feats.shape[0], n_folds), dtype=object)
+    coeffs = np.zeros((feats.shape[0], n_folds, acts.shape[2], feats.shape[2]))
+    vis_targ = np.zeros((feats.shape[0], n_folds), dtype=object)
+    vals = np.unique(feats[..., 2])
+    val_resps_pos1 = np.zeros((feats.shape[0], n_folds, acts.shape[2],
+                               len(vals)))
+    val_resps_pos2 = np.zeros_like(val_resps_pos1)
+    
+    val_resps_pos1[:] = np.nan
+    val_resps_pos2[:] = np.nan
+    for i, feat in enumerate(feats):
+        pos1_mask = feat[:, 0] > 0
+        pos2_mask = feat[:, 1] > 0
+        act = acts[i]
+        not_nan_mask = ~np.isnan(act[0])
+        act = act[:, not_nan_mask]        
+        m = model(**model_kwargs)
+        if use_kfold:
+            splitter = skms.KFold(2, shuffle=True)
+        else:
+            splitter = rand_splitter(n_splits=n_folds, test_size=leave_out)
+        results = na.cross_validate_wrapper(m, feat, act, cv=splitter)
+        print(results['test_score'])
+        for k, m in enumerate(results['estimator']):
+            models[i, k] = m
+            coeffs[i, k, not_nan_mask] = m.coef_
+            vis_targ[i, k] = results['test_targ'][k]
+            for j, val in enumerate(vals):
+                p1_match = np.array([1, 0, val])
+                p1_mask = np.all(feat[:, :3] == p1_match, axis=1)
+                p2_match = np.array([0, 1, val])
+                p2_mask = np.all(feat[:, :3] == p2_match, axis=1)
+                val_resps_pos1[i, k, not_nan_mask, j] = m.predict(
+                    feat[p1_mask][0:1]
+                )
+                val_resps_pos2[i, k, not_nan_mask, j] = m.predict(
+                    feat[p2_mask][0:1]
+                )
+        
+    return (models, coeffs, val_resps_pos1, val_resps_pos2, vis_targ,
+            feats, acts)
+
+def _nan_mask(arr, ret_mask=False):
+    mask = ~np.all(np.isnan(arr), axis=0)
+    out = arr[:, mask]
+    if ret_mask:
+        out = (out, mask)
+    return out
+
+def shared_subspace_from_pops(p1_group, p2_group, t_ind=0, n_folds=10,
+                              concatenate_time=True, **kwargs):
+    out_same = np.zeros((p1_group[0].shape[0], n_folds, 2))
+    out_diff = np.zeros((p1_group[0].shape[0], n_folds, 2))
+    p1_comb = np.concatenate(p1_group, axis=3)
+    p2_comb = np.concatenate(p2_group, axis=3)
+    
+    for i, p1_i in enumerate(p1_comb):
+        p2_i = np.squeeze(p2_comb[i])
+        p1_i = np.squeeze(p1_i)
+        if concatenate_time:
+            p1_i = np.concatenate(list(p1_i[..., j]
+                                       for j in range(p1_i.shape[-1])),
+                                  axis=0)
+            p2_i = np.concatenate(list(p2_i[..., j]
+                                       for j in range(p2_i.shape[-1])),
+                                  axis=0)
+        else:
+            p1_i = p1_i[..., t_ind]
+            p2_i = p2_i[..., t_ind]
+                                       
+        tv, trs_v = shared_subspace(p1_i.T, p2_i.T, n_folds=n_folds, **kwargs)
+        
+        out_same[i] = tv
+        out_diff[i] = trs_v
+    return out_same, out_diff
+
+def estimate_distances(p1_group, p2_group, t_ind=0, n_folds=10,
+                       concatenate_time=True, max_trials=100,
+                       **kwargs):
+    p1_group = tuple(p_i[..., :max_trials, :] for p_i in p1_group)
+    p2_group = tuple(p_i[..., :max_trials, :] for p_i in p2_group)
+    p1_comb = np.concatenate(p1_group, axis=3)
+    p2_comb = np.concatenate(p2_group, axis=3)
+    
+    for i, p1_i in enumerate(p1_comb):
+        p2_i = np.squeeze(p2_comb[i])
+        p1_i = np.squeeze(p1_i)
+        if concatenate_time:
+            p1_i = np.concatenate(list(p1_i[..., j]
+                                       for j in range(p1_i.shape[-1])),
+                                  axis=0)
+            p2_i = np.concatenate(list(p2_i[..., j]
+                                       for j in range(p2_i.shape[-1])),
+                                  axis=0)
+        else:
+            p1_i = p1_i[..., t_ind]
+            p2_i = p2_i[..., t_ind]
+
+        p_all = np.concatenate((p1_i, p2_i), axis=1).T
+        p_mask = np.sum(p_all, axis=0) > 0
+        p_all = p_all[:, p_mask]
+        
+        stim = list((str(i),)*p_ind.shape[3]
+                    for i, p_ind in enumerate(p1_group + p2_group))
+        stim = np.concatenate(stim)
+        data = rsa.data.Dataset(p_all, obs_descriptors={'stimulus':stim})
+        # print(data.get_measurements_tensor('stimulus')[0])
+        noise = rsa.data.noise.prec_from_measurements(data, 'stimulus',
+                                                      p1_group[0].shape[3] - 1,
+                                                      method='shrinkage_diag')
+        rdm = rsa.rdm.calc_rdm(data, descriptor='stimulus', noise=noise,
+                               method='crossnobis')
+        return rdm
+
+def fit_stan_models(session_dict, model_path='general/stan_models/lm.pkl',
+                    sigma_prior=1, mu_prior=1, **kwargs):
+    out_dict = {}
+    for key, (predictors, targets) in session_dict.items():
+        N, K = predictors.shape
+        stan_dict = {
+            'N':N,
+            'K':K,
+            'x':predictors,
+            'sigma_std_prior':sigma_prior,
+            'mu_std_prior':mu_prior,
+        }
+        fits = []
+        diags = []
+        for i in range(targets.shape[1]):
+            stan_dict['y'] = targets[:, i]
+            _, fit_az, diag = su.fit_model(stan_dict, model_path, **kwargs)
+            fits.append(fit_az)
+            diags.append(diag)
+        stan_dict['y'] = targets
+        out_dict[key] = (stan_dict, fits, diags)
+    return out_dict      
+
+def make_model_alternatives(
+        data,
+        save_size=1,
+        folder='multiple_representations/model_dicts/',
+        **kwargs
+):
+    params_dicts = {
+        'null':{'include_interaction':False,},
+        'interaction':{'include_interaction':True,},
+        'null_spline':{'transform_value':True,},
+        'interaction_spline':{'include_interaction':False,
+                              'transform_value':True},
+    }
+    model_dicts = {}
+    for key, params in params_dicts.items():
+        new_kwargs = {}
+        new_kwargs.update(kwargs)
+        new_kwargs.update(params)
+        session_dict = make_predictor_matrices(data, **new_kwargs)
+        template = 'sd_{}'.format(key) + '_{}.pkl'
+        num = split_and_save_subdicts(session_dict, folder, template=template,
+                                      save_size=save_size)
+        model_dicts[key] = session_dict
+    return model_dicts, num
+
+def make_predictor_matrices(
+        data,
+        val1_key='subj_ev offer 1',
+        val2_key='subj_ev offer 2',
+        side_key='side of offer 1 (Left = 1 Right =0)',
+        o1_on_key='Offer 1 on',
+        o2_on_key='Offer 2 on',
+        t_beg=100,
+        t_end=1000,
+        norm_targets=True,
+        norm_value=True,
+        include_interaction=True,
+        transform_value=False,
+        spline_knots=4,
+        spline_degree=2,
+):
+    session_dicts = {}
+    for i, session in data.data.iterrows():
+        timing = session['psth_timing']
+        animal = session['animal']
+        date = session['date']
+        region = session.data['neur_regions'].iloc[0]
+        val1 = np.expand_dims(session.data[val1_key], 1)
+        val2 = np.expand_dims(session.data[val2_key], 1)
+        side = session.data[side_key]
+        sides1 = np.zeros((len(side), 1))
+        sides1[side == 1, 0] = 1
+        sides1[side == 0, 0] = -1
+
+        sides2 = np.zeros((len(side), 1))
+        sides2[side == 0, 0] = 1
+        sides2[side == 1, 0] = -1
+        
+        val_mask = np.array([True, False])
+        side_mask = np.array([False, True])
+        p1 = np.concatenate((val1, sides1), axis=1)
+        p2 = np.concatenate((val2, sides2), axis=1)
+        predictors = np.concatenate((p1, p2), axis=0)
+        
+        o1_timing = session.data[o1_on_key]
+        resp1 = _get_window(session.data.psth, o1_timing, t_beg, t_end,
+                            timing)
+        o2_timing = session.data[o2_on_key]
+        resp2 = _get_window(session.data.psth, o2_timing, t_beg, t_end,
+                            timing)
+        targets = np.concatenate((resp1, resp2), axis=0)
+        if norm_targets:
+            targets = skp.StandardScaler().fit_transform(targets)
+        if transform_value:
+            st = skp.SplineTransformer(n_knots=spline_knots,
+                                       degree=spline_degree,
+                                       include_bias=False)
+            new_val = st.fit_transform(predictors[:, val_mask])
+            predictors = np.concatenate((new_val, predictors[:, side_mask]),
+                                        axis=1)
+            val_mask = np.array([True]*new_val.shape[1] + [False])
+            side_mask = np.logical_not(val_mask)            
+        if norm_value:
+            predictors[:, val_mask] = skp.StandardScaler().fit_transform(
+                predictors[:, val_mask]
+            )
+        if include_interaction:
+            inter_term = predictors[:, val_mask]*predictors[:, side_mask]
+            predictors = np.concatenate((predictors, inter_term),
+                                        axis=1)
+        session_dicts[(region, animal, date)] = (predictors, targets)
+    return session_dicts
+
+def split_and_save_subdicts(session_dict, folder, template='sd_{}.pkl',
+                            save_size=1):
+    items = list(session_dict.items())
+    item_inds = range(0, len(session_dict), save_size)
+    for i, start in enumerate(item_inds):
+        sub_dict = dict(items[start:start+save_size])
+        fname = template.format(i)
+        full_path = os.path.join(folder, fname)
+        pickle.dump(sub_dict, open(full_path, 'wb'))
+    return i 
+
+def _get_window(psth, tz, beg, end, times):
+    ct = np.expand_dims(times, 0) - np.expand_dims(tz, 1)
+    mask = np.logical_and(ct >= beg, ct < end)
+    psth_arr = np.stack(psth, axis=0)
+    psth_arr = np.swapaxes(psth_arr, 1, 2)
+    psth_masked = np.stack(list(psth_arr[i, mask_i]
+                                for i, mask_i in enumerate(mask)),
+                           axis=0)
+    counts = np.sum(psth_masked, axis=1)
+    return counts
+
+def compute_angles(rdm):
+    mat = rdm.get_matrices()[0]
+    d01 = mat[(0, 1)]
+    d02 = mat[(0, 2)]
+    d12 = mat[(1, 2)]
+    ang012 = np.arccos((d01**2 + d02**2 - d12**2)/(2*d01*d02))
+    return ang012
+    
+def shared_subspace(vr1, vr2, dims=4, cv=None, n_folds=10, frac=.1):
+    if cv is None:
+        cv = skms.ShuffleSplit(n_folds, test_size=frac)
+    vr1 = _nan_mask(vr1)
+    vr2 = _nan_mask(vr2)
+
+    print('vr1', vr1.shape)
+    tot = np.concatenate((vr1, vr2), axis=0)
+    ss = skp.StandardScaler().fit(tot)
+    vr1 = ss.transform(vr1)
+    vr2 = ss.transform(vr2)
+    
+    cv_gen1 = cv.split(vr1)
+    cv_gen2 = cv.split(vr2)
+
+    total_vars = np.zeros((n_folds, 2))
+    trs_vars = np.zeros_like(total_vars)
+    for i, (tr1_inds, te1_inds) in enumerate(cv_gen1):
+        tr2_inds, te2_inds = next(cv_gen2)
+        
+        p1 = skd.PCA(dims)
+        p1.fit(vr1[tr1_inds])
+        p1_vr1 = p1.transform(vr1[te1_inds])
+        p1_vr2 = p1.transform(vr2)
+        p1_max = p1.transform(vr1[tr1_inds])
+        print(p1_max.shape)
+        print(np.var(p1_max, axis=0))
+        print(p1.explained_variance_)
+        
+        p2 = skd.PCA(dims)
+        p2.fit(vr2[tr2_inds])
+        p2_vr2 = p2.transform(vr2[te2_inds])
+        p2_vr1 = p2.transform(vr1)
+        p2_max = p2.transform(vr2[tr2_inds])
+
+        p1_max_sum = np.sum(np.var(p1_max, axis=0))
+        p2_max_sum = np.sum(np.var(p2_max, axis=0))
+        
+        total_vars[i, 0] = np.sum(np.var(p1_vr1, axis=0))/p1_max_sum
+        trs_vars[i, 0] = np.sum(np.var(p1_vr2, axis=0))/p1_max_sum
+        total_vars[i, 1] = np.sum(np.var(p2_vr2, axis=0))/p2_max_sum
+        trs_vars[i, 1] = np.sum(np.var(p2_vr1, axis=0))/p2_max_sum
+        
+
+    return total_vars, trs_vars
+    
+rand_splitter = skms.ShuffleSplit
+def fit_gps(l_pops, r_pops, model=sklm.Ridge, norm=True,
+            pca=None, rand_splitter=rand_splitter, test_prop=None,
+            folds_n=20, shuffle=False, pre_pca=None, multi_task=True,
+            num_inducing=40, max_fit=20,
+            **model_kwargs):
+    """ conds is the same length as pops, and gives the feature values """
+    feats, acts = format_pops(l_pops, r_pops)
+    if test_prop is None:
+        test_prop = 1/folds_n
+    if rand_splitter is None:
+        splitter = skms.KFold(folds_n, shuffle=True)
+        internal_splitter = skms.KFold(folds_n, shuffle=True)
+    else:
+        splitter = rand_splitter(folds_n, test_size=test_prop)
+    models = np.zeros((feats.shape[0], folds_n, acts.shape[2]), dtype=object)
+    te_perf = np.zeros_like(models, dtype=float)
+    for i, feat in enumerate(feats[:1]):
+        act = acts[i]
+        not_nan_mask = ~np.isnan(act[0])
+        act = act[:, not_nan_mask]
+        m = model(**model_kwargs)
+        for j, (tr_inds, te_inds) in enumerate(splitter.split(feat, act)):
+            act_tr_i = act[tr_inds]
+            feat_tr_i = feat[tr_inds]
+            fit_range = min(act_tr_i.shape[1], max_fit)
+            for k in range(act_tr_i.shape[1])[:fit_range]:
+                m_oak = mu.oak_model(categorical_feature=[0],
+                                     num_inducing=num_inducing,
+                                     use_sparsity_prior=False)
+                m_oak.fit(feat_tr_i, act_tr_i[:, k:k+1])
+
+                pred = m_oak.predict(feat[te_inds])
+                mu_mse = np.mean((pred - act[te_inds, k])**2)
+                var = np.var(act[te_inds])
+                te_perf[i, j, k] = 1 - mu_mse/var
+                models[i, j, k] = m_oak
+    return feats, acts, models, te_perf
+
 
 def xor_analysis(data, tbeg, tend, dec1_field, dec2_field,
                  dead_perc=30, winsize=500, tstep=20,
@@ -460,6 +984,74 @@ def _compute_masks(data, dec_field, gen_field, dead_perc=30, use_split_dec=None,
         gen_mask_c1 = gen_mask_c1.rs_and(gen_mask)
         gen_mask_c2 = gen_mask_c2.rs_and(gen_mask)
     return mask_c1, mask_c2, gen_mask_c1, gen_mask_c2
+
+def binding_analysis_noadd(data, tbeg, tend, feat1, feat2,
+                           dead_perc=30, winsize=500, tstep=20,
+                           pop_resamples=20, kernel='linear',
+                           tzf='Offer 2 on', 
+                           min_trials=160, pre_pca=None,
+                           shuffle_trials=True, c1_targ=2, c2_targ=3,
+                           f1_mask=None, f2_mask=None, use_split_dec=None,
+                           regions=None, shuffle=False, mean=False,
+                           n_folds=20, params=None, xor=False,
+                           full_mask=None, gen_mask=None, **kwargs):
+    if params is None:
+        params = {'class_weight':'balanced'}
+        # params.update(kwargs)
+        
+    out = _compute_masks(data, feat1, feat2, dead_perc=dead_perc,
+                         use_split_dec=use_split_dec, dec_mask=f1_mask,
+                         gen_mask=f2_mask, c1_targ=c1_targ, c2_targ=c2_targ)
+    mask_f11, mask_f12, mask_f21, mask_f22 = out
+    # left low, left high, right low, right high
+    
+    # left low AND right high
+    c1_mask = mask_f11.rs_and(mask_f22)
+    # left high AND right low
+    c2_mask = mask_f12.rs_and(mask_f21)
+    if gen_mask is not None:
+        g1_mask = c1_mask.rs_and(gen_mask)
+        g2_mask = c2_mask.rs_and(gen_mask)
+        gens = (g1_mask, g2_mask)
+        gen_tzfs = (tzf, tzf)
+    else:
+        gens = ()
+        gen_tzfs = ()
+    if full_mask is not None:
+        c1_mask = c1_mask.rs_and(full_mask)
+        c2_mask = c2_mask.rs_and(full_mask)
+    tzfs = (tzf, tzf) + gen_tzfs
+    masks = (c1_mask, c2_mask) + gens
+
+    out = data.make_pseudo_pops(winsize, tbeg, tend, tstep,
+                                *masks,
+                                tzfs=tzfs,
+                                regions=regions, min_trials=min_trials,
+                                resamples=pop_resamples)
+    if gen_mask is None:
+        xs, (pop_c1, pop_c2) = out
+        gen_c1 = (None,)*len(pop_c1)
+        gen_c2 = (None,)*len(pop_c1)
+    else:
+        xs, (pop_c1, pop_c2, gen_c1, gen_c2) = out
+    outs = np.zeros((len(pop_c1), n_folds, len(xs)))
+    outs_gen = np.zeros((len(pop_c1), n_folds, len(xs)))
+    print(pop_c1.shape, pop_c2.shape)
+    for i, pop_c1_i in enumerate(pop_c1):
+        out = na.fold_skl(pop_c1_i, pop_c2[i], n_folds, params=params, 
+                          mean=mean, pre_pca=pre_pca, shuffle=shuffle,
+                          impute_missing=False, gen_c1=gen_c1[i],
+                          gen_c2=gen_c2[i],
+                          **kwargs)
+        if gen_mask is not None:
+            out, out_gen = out
+            outs_gen[i] = out_gen
+        outs[i] = out
+    if gen_mask is not None:
+        full_out = (outs, xs, outs_gen)
+    else:
+        full_out = (outs, xs)
+    return full_out
 
 def binding_analysis(data, tbeg, tend, feat1, feat2,
                      dead_perc=30, winsize=500, tstep=20,
@@ -574,21 +1166,21 @@ def nearest_decoder_epochs(data, masks, tbeg=100, tend=1000,
                            tzf='Offer 2 on', min_trials=80, 
                            regions=None, cv_runs=20, **kwargs):
 
-    print(tzf)
     out = data.make_pseudo_pops(winsize, tbeg, tend, tstep, *masks,
                                 tzfs=(tzf,)*len(masks),
                                 min_trials=min_trials,
                                 resamples=pop_resamples)
     xs, cond_pops = out
-    print(cond_pops[0].shape)
     dec_perf = np.zeros((pop_resamples, cv_runs, len(xs)))
     dec_info = np.zeros((pop_resamples, len(xs)), dtype=object)
+    dec_confusion = np.zeros((pop_resamples, cv_runs, len(xs),
+                              len(cond_pops), len(cond_pops)))
     for i in range(pop_resamples):
         use_pops = list(cp[i] for cp in cond_pops)
         out = na.nearest_decoder(*use_pops, norm=True, cv_runs=cv_runs,
-                                 **kwargs)
-        dec_perf[i], dec_info[i] = out
-    return xs, dec_perf, dec_info
+                                 generate_confusion=True, **kwargs)
+        dec_perf[i], dec_info[i], dec_confusion[i] = out
+    return xs, dec_perf, dec_info, dec_confusion
     
 
 def generalization_analysis(data, tbeg, tend, dec_field, gen_field,
@@ -605,7 +1197,6 @@ def generalization_analysis(data, tbeg, tend, dec_field, gen_field,
                          use_split_dec=use_split_dec, dec_mask=f1_mask,
                          gen_mask=f2_mask, c1_targ=c1_targ, c2_targ=c2_targ)
     mask_c1, mask_c2, gen_mask_c1, gen_mask_c2 = out
-
     out = data.decode_masks(mask_c1, mask_c2, winsize, tbeg, tend, tstep, 
                             pseudo=True, time_zero_field=f1_tzf,
                             min_trials_pseudo=min_trials,
@@ -692,15 +1283,19 @@ cond_timing = (('offer_left_on', 'offer_right_on'),
                ('offer_right_on', 'offer_left_on'),
                ('offer_left_on', 'offer_left_on'),
                ('offer_right_on', 'offer_right_on'))
-cond_funcs = ((ft.partial(_prob_side_tune, side=1),
-               ft.partial(_prob_side_tune, side=1)),
-              (ft.partial(_prob_side_tune, side=1),
-               ft.partial(_prob_side_tune, side=0)),
-              (ft.partial(_prob_side_tune, side=0),
-               ft.partial(_prob_side_tune, side=1)),
-              (ft.partial(_prob_side_tune, side=0),
-               ft.partial(_prob_side_tune, side=0)))
-              
+cond_funcs = (
+    (ft.partial(_prob_side_tune, side=1),  # side 1/offer 1 then side 2/offer 2
+     ft.partial(_prob_side_tune, side=1)),
+    
+    (ft.partial(_prob_side_tune, side=1),  # side 1/offer 1 then side 2/offer 1
+     ft.partial(_prob_side_tune, side=0)),
+    
+    (ft.partial(_prob_side_tune, side=0),  # side 1/offer 2 then side 2/offer 2
+     ft.partial(_prob_side_tune, side=1)),
+    
+    (ft.partial(_prob_side_tune, side=0),  # side 2/offer 1 then side 1/offer 2
+     ft.partial(_prob_side_tune, side=0))
+)
 def compute_conditional_generalization(data, tbeg, tend, dec_var,
                                        conditional_funcs=cond_funcs,
                                        suffixes=cond_suffixes,
@@ -1004,12 +1599,39 @@ def _get_percentile_chunks(*field_datas, n_chunks=10, ref_data=None):
     masks = list([] for _ in field_datas)
     for i, lb in enumerate(cb_vals[:-1]):
         ub = cb_vals[i + 1]
-        print(lb, ub)
         for j, fd in enumerate(field_datas):
             mask_ij = (fd >= lb).rs_and(fd < ub)
             masks[j].append(mask_ij)
     return masks
 
+def regression_data_pseudopop(data, tbeg, tend, targ1, targ2,
+                              t1_tzf='offer_left_on', t2_tzf='offer_right_on',
+                              winsize=500, min_trials=10, n_percentiles=10,
+                              dec_mask=None, gen_mask=None, **kwargs):
+    if dec_mask is not None:
+        ref_data = (data.mask(dec_mask))[targ1]
+    else:
+        ref_data = None
+    out = _get_percentile_chunks(data[targ1], data[targ2],
+                                 n_chunks=n_percentiles,
+                                 ref_data=ref_data)
+    t1_masks, t2_masks = out
+    if dec_mask is not None:
+        t1_masks = list(cdm.rs_and(dec_mask) for cdm in t1_masks)
+    if gen_mask is not None:
+        t2_masks = list(cgm.rs_and(gen_mask) for cgm in t2_masks)
+
+    out = data.regress_discrete_masks(chunk_dec_masks, winsize, tbeg, tend,
+                                      winsize, time_zero_field=dec_tzf,
+                                      min_trials_pseudo=min_trials,
+                                      pseudo=True, decode_tzf=gen_tzf,
+                                      decode_masks=chunk_gen_masks,
+                                      **kwargs)
+
+
+
+
+    
 def regression_gen_pseudopop(data, tbeg, tend, dec_targ, gen_targ,
                              dec_tzf='offer_left_on', gen_tzf='offer_right_on',
                              winsize=500, min_trials=10, n_percentiles=10,
@@ -1027,7 +1649,7 @@ def regression_gen_pseudopop(data, tbeg, tend, dec_targ, gen_targ,
     if gen_mask is not None:
         chunk_gen_masks = list(cgm.rs_and(gen_mask) for cgm in chunk_gen_masks)
     out = data.regress_discrete_masks(chunk_dec_masks, winsize, tbeg, tend,
-                                      None, time_zero_field=dec_tzf,
+                                      winsize, time_zero_field=dec_tzf,
                                       min_trials_pseudo=min_trials,
                                       pseudo=True, decode_tzf=gen_tzf,
                                       decode_masks=chunk_gen_masks,

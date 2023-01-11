@@ -46,6 +46,14 @@ class MultipleRepFigure(pu.Figure):
             if panel_data is not None:
                 filename = key.split('_', 1)[1] + suff + ext
                 path = os.path.join(folder, filename)
+                for k, v in panel_data.items():
+                    if v is None:
+                        k[v] = np.nan
+                    else:
+                        for kd, vd in v.items():
+                            if vd is None:
+                                v[kd] = np.nan
+                                
                 sio.savemat(path, panel_data)
             else:
                 unsaved_keys.append(key)
@@ -196,7 +204,8 @@ class DecodingFigure(MultipleRepFigure):
                                     'pred_bin':1 - out[0],
                                     'd_l':out[2][0],
                                     'd_n':out[2][1],
-                                    'sigma':out[2][2]}
+                                    'sigma':out[2][2],
+                                    'sem':out[2][3]}
                     else:
                         out_dict = None
                     model_dict[region][contrast] = out_dict
@@ -232,7 +241,7 @@ class DecodingFigure(MultipleRepFigure):
         dec_key = 'ev_generalization'
         if self.data.get(key) is None or force_refit:
             self.data[key] = self._direct_predictions(dec_key)
-        if self.data.get(save_key) is None:
+        if self.data.get(save_key) is None or force_refit:
             self.make_dec_save_dicts(keys=(key,),
                                      loss=False,
                                      keep_subset=False)
@@ -244,7 +253,7 @@ class DecodingFigure(MultipleRepFigure):
         dec_key = 'ev_generalization_other'
         if self.data.get(key) is None or force_refit:
             self.data[key] = self._direct_predictions(dec_key)
-        if self.data.get(save_key) is None:
+        if self.data.get(save_key) is None or force_refit:
             self.make_dec_save_dicts(keys=(key,),
                                      loss=False,
                                      keep_subset=False)
@@ -331,13 +340,15 @@ class DecodingFigure(MultipleRepFigure):
         mask_func = lambda x: x < 1
         mask_var = 'prob'
         use_split_dec = None
+        dec_less = self.params.getboolean('dec_less')
         if self.data.get(key) is None or force_recompute:
             out = self._decoding_analysis(data_field, mra.compute_all_generalizations,
                                           force_reload=force_reload,
                                           dead_perc=dead_perc,
                                           min_trials=min_trials,
                                           use_split_dec=use_split_dec,
-                                          mask_func=mask_func, mask_var=mask_var)
+                                          mask_func=mask_func, mask_var=mask_var,
+                                          dec_less=dec_less)
             self.data[key] = out
         return self.data[key]
     
@@ -350,6 +361,7 @@ class DecodingFigure(MultipleRepFigure):
         key = 'ev_generalization_other'
         dead_perc = self.params.getfloat('exclude_middle_percentiles')
         min_trials = self.params.getint('min_trials_ev_other')
+        dec_less = self.params.getboolean('dec_less')
         use_split_dec = None
         if self.data.get(key) is None or force_recompute:
             out = self._decoding_analysis(data_field,
@@ -357,7 +369,8 @@ class DecodingFigure(MultipleRepFigure):
                                           force_reload=force_reload,
                                           dead_perc=dead_perc,
                                           min_trials=min_trials,
-                                          use_split_dec=use_split_dec)
+                                          use_split_dec=use_split_dec,
+                                          dec_less=dec_less)
             self.data[key] = out
         return self.data[key]
     
@@ -486,7 +499,7 @@ def _get_nv_boot(coeffs, columns):
 class TheoryFigure(MultipleRepFigure):
 
     def __init__(self, fig_key='theory_figure', colors=colors, **kwargs):
-        fsize = (8, 3)
+        fsize = (5, 6)
         cf = u.ConfigParserColor()
         cf.read(config_path)
         
@@ -497,6 +510,27 @@ class TheoryFigure(MultipleRepFigure):
 
     def make_gss(self):
         gss = {}
+        use_contrasts = self.params.getlist('use_contrasts')
+        if use_contrasts is None:
+            preds = self._get_gen_emp_pred()[0]
+            n_conds = len(preds['all'].dtype.names)
+        else:
+            n_conds = len(use_contrasts)
+
+        gs_dists = pu.make_mxn_gridspec(self.gs, 1, 2, 0, 20, 0, 100, 10, 15)
+        axs_dists = self.get_axs(gs_dists, sharey=True, sharex=True)
+            
+        gs1 = pu.make_mxn_gridspec(self.gs, 1, n_conds, 30, 50, 0, 100, 10, 15)
+        axs1 = self.get_axs(gs1, sharey=True)
+        
+        gs2 = pu.make_mxn_gridspec(self.gs, 1, n_conds, 60, 80, 0, 100, 10, 15)
+        axs2 = self.get_axs(gs2, sharey=True)
+        
+        gs3 = pu.make_mxn_gridspec(self.gs, 1, n_conds, 80, 100, 0, 100, 10, 15)
+        axs3 = self.get_axs(gs3, sharey=True)
+        
+        gss['panel_theory_dec_plot'] = (axs_dists,
+                                        np.concatenate((axs1, axs2, axs3)).T)
         self.gss = gss
 
     def get_coeffs_bootstrapped(self, force_reload=False, methods=('Boot-EN',),
@@ -596,6 +630,64 @@ class TheoryFigure(MultipleRepFigure):
             self.data[key] = out_prediction
         return self.data[key]
 
+    def _get_gen_emp_pred(self):
+        folder = self.params.get('decoding_folder')
+        pred_file = self.params.get('pred_file')
+        dec_file = self.params.get('dec_file')
+        preds = sio.loadmat(os.path.join(folder, pred_file))
+        emp = sio.loadmat(os.path.join(folder, dec_file))
+        return preds, emp        
+
+    def panel_theory_dec_plot(self):
+        key = 'panel_theory_dec_plot'
+        axs_dists, axs = self.gss[key]
+        
+        preds, decs = self._get_gen_emp_pred()
+        regions = self.params.getlist('use_regions')
+    
+        use_contrasts = self.params.getlist('use_contrasts')
+        if use_contrasts is None:
+            contrasts = preds[regions[0]].dtype.names
+        else:
+            contrasts = use_contrasts
+        cnames = self.params.getlist('contrast_names')
+        if cnames is None:
+            cnames = contrasts
+        for i, region in enumerate(regions):
+            for j, contrast in enumerate(contrasts):
+                print(contrast)
+                print(preds[region].dtype)
+                pred_ij = preds[region][contrast]
+                dec_ij = decs[region][contrast]
+                try:
+                    mrv.plot_data_pred(pred_ij[0, 0], dec_ij[0, 0], axs=axs[j],
+                                       label=region)
+                except IndexError:
+                    s = 'did not plot {} for {} (likely a nan)'
+                    print(s.format(region, contrast))
+                out = mrv.plot_dists(i, pred_ij[0, 0], ax=axs_dists[0, j],
+                                     label=region)
+                l_lin, l_con = out
+                axs_dists[0, j].set_xticks(np.arange(len(regions)))
+                axs_dists[0, j].set_xticklabels(regions, rotation=60)
+                gpl.clean_plot(axs_dists[0, j], i)
+
+
+        for j in range(axs.shape[0]):
+            axs[j, 0].set_title(cnames[j])
+            axs[j, 1].set_xlabel('subspace correlation (r)')
+            axs[j, 2].set_xlabel('generalization\nerror rate')
+            axs[j, 2].set_xlabel('generalization\nerror rate')
+            gpl.add_hlines(.5, axs[j, 0])
+            gpl.add_hlines(.125, axs[j, 1])
+            gpl.add_hlines(.125, axs[j, 2])
+            gpl.add_vlines(.5, axs[j, 2])
+
+        axs_dists[0, -1].legend(handles=(l_lin, l_con), frameon=False)
+        axs[0, 0].set_ylabel('generalization\nerror rate')
+        axs[0, 1].set_ylabel('binding error rate')
+        axs[0, 2].set_ylabel('binding error rate')
+                
     def _get_subspace_correlations(self, force_reload=False,
                                    subspace_key='subspace_corr',
                                    linear_side='without_linear_side_incld'):
