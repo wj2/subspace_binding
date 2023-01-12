@@ -4,7 +4,8 @@ import numpy as np
 import pandas as pd
 import scipy.io as sio
 import re
-from one.api import One
+import pickle
+# from one.api import One
 
 bhv_fields_rename = {'trials.included':'include',
                      'trials.visualStim_contrastLeft':'contrastLeft',
@@ -18,7 +19,8 @@ def save_model_fits(fit_dict, output_folder):
     os.mkdir(output_folder)
     for key, item in fit_dict.items():
         for i, fit in enumerate(item[1]):
-            new_path = os.path.join(output_folder, 'azf_{}.nc')
+            new_path = os.path.join(output_folder,
+                                    'azf_{}.nc'.format(i))
             fit.to_netcdf(new_path)
             item[1][i] = new_path
     d_path = os.path.join(output_folder, 'fit_dict.pkl')
@@ -73,51 +75,51 @@ def split_spks_bhv(ids, ts, beg_ts, end_ts, extra):
             spks_cont[i, j] = ts_m[mask_n]
     return spks_cont, unique_neurs
 
-def load_steinmetz_data(folder, bhv_fields=bhv_fields_rename,
-                        trl_start_field='trials.visualStim_times',
-                        trl_end_field='trials.feedback_times',
-                        max_files=np.inf,
-                        spk_times='spikes.times',
-                        spike_clusters='spikes.clusters',
-                        cluster_channel='clusters.peakChannel',
-                        channel_loc='channels.brainLocation',
-                        extra=1):
-    one = One(cache_dir=folder)
-    session_ids = one.search(dataset='trials')
-    if max_files is not np.inf:
-        session_ids = session_ids[:max_files]
-    dates, expers, animals, datas, n_neurs = [], [], [], [], []
-    for i, si in enumerate(session_ids):
-        bhv_keys = list(bhv_fields.keys())
-        data, info = one.load_datasets(si, bhv_keys)
-        (trl_start, trl_end), _ = one.load_datasets(si, [trl_start_field,
-                                                         trl_end_field])
+# def load_steinmetz_data(folder, bhv_fields=bhv_fields_rename,
+#                         trl_start_field='trials.visualStim_times',
+#                         trl_end_field='trials.feedback_times',
+#                         max_files=np.inf,
+#                         spk_times='spikes.times',
+#                         spike_clusters='spikes.clusters',
+#                         cluster_channel='clusters.peakChannel',
+#                         channel_loc='channels.brainLocation',
+#                         extra=1):
+#     one = One(cache_dir=folder)
+#     session_ids = one.search(dataset='trials')
+#     if max_files is not np.inf:
+#         session_ids = session_ids[:max_files]
+#     dates, expers, animals, datas, n_neurs = [], [], [], [], []
+#     for i, si in enumerate(session_ids):
+#         bhv_keys = list(bhv_fields.keys())
+#         data, info = one.load_datasets(si, bhv_keys)
+#         (trl_start, trl_end), _ = one.load_datasets(si, [trl_start_field,
+#                                                          trl_end_field])
         
-        info_str = info[0]['session_path'].split('/')
-        a_i = info_str[2]
-        d_i = info_str[3]
-        e_i = 'contrast_compare'
-        session_dict = {}
-        for i, bk in enumerate(bhv_keys):
-            session_dict[bhv_fields[bk]] = data[i]
-        out = one.load_datasets(si, [spk_times, spike_clusters, cluster_channel,
-                                     channel_loc])
-        (ts, c_ident, c_channel, chan_loc), _ = out
-        spks_cont, unique_neurs = split_spks_bhv(c_ident, ts, trl_start, trl_end,
-                                                 extra)
-        loc_list = chan_loc['allen_ontology'].to_numpy()
-        regions = loc_list[c_channel[unique_neurs].astype(int) - 1]
-        session_dict['spikeTimes'] = list(n for n in spks_cont)
-        session_dict['neur_regions'] = (regions,)*len(spks_cont)
-        df_i = pd.DataFrame.from_dict(session_dict)
-        dates.append(d_i)
-        expers.append(e_i)
-        animals.append(a_i)
-        datas.append(df_i)
-        n_neurs.append(len(unique_neurs))
-    super_dict = dict(date=dates, experiment=expers, animal=animals,
-                      data=datas, n_neurs=n_neurs)
-    return super_dict
+#         info_str = info[0]['session_path'].split('/')
+#         a_i = info_str[2]
+#         d_i = info_str[3]
+#         e_i = 'contrast_compare'
+#         session_dict = {}
+#         for i, bk in enumerate(bhv_keys):
+#             session_dict[bhv_fields[bk]] = data[i]
+#         out = one.load_datasets(si, [spk_times, spike_clusters, cluster_channel,
+#                                      channel_loc])
+#         (ts, c_ident, c_channel, chan_loc), _ = out
+#         spks_cont, unique_neurs = split_spks_bhv(c_ident, ts, trl_start, trl_end,
+#                                                  extra)
+#         loc_list = chan_loc['allen_ontology'].to_numpy()
+#         regions = loc_list[c_channel[unique_neurs].astype(int) - 1]
+#         session_dict['spikeTimes'] = list(n for n in spks_cont)
+#         session_dict['neur_regions'] = (regions,)*len(spks_cont)
+#         df_i = pd.DataFrame.from_dict(session_dict)
+#         dates.append(d_i)
+#         expers.append(e_i)
+#         animals.append(a_i)
+#         datas.append(df_i)
+#         n_neurs.append(len(unique_neurs))
+#     super_dict = dict(date=dates, experiment=expers, animal=animals,
+#                       data=datas, n_neurs=n_neurs)
+#     return super_dict
 
 rwd_conversion = {0.15:1., 0.18:2., 0.21:3.}
 def _add_data_vars(sd, trls, var_names, check=True,

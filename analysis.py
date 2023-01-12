@@ -20,9 +20,9 @@ import general.data_io as gio
 import general.stan_utility as  su
 import multiple_representations.theory as mrt
 import multiple_representations.auxiliary as mraux
-import rsatoolbox as rsa
+# import rsatoolbox as rsa
 
-import oak.model_utils as mu
+# import oak.model_utils as mu
 
 visual_regions = ('VISp', 'VISI', 'VISpm', 'VISam', 'VISrl', 'VISa')
 choice_regions = ('MOs', 'PL', 'ILA', 'ORB', 'MOp', 'SSp', 'SCm', 'MRN')
