@@ -5,6 +5,7 @@ import numpy as np
 import pickle
 import functools as ft
 from datetime import datetime
+import os 
 
 import general.utility as u
 import multiple_representations.analysis as mra
@@ -34,8 +35,10 @@ if __name__ == '__main__':
         noise_model=args.fit_noise_model
     )
     if args.fit_noise_model:
-        num = args.output_folder.split('_')[-1]
-        args.output_folder = 'fit_noise_{}'.format(num)
+        folder_path, folder_name = os.path.split(args.output_folder)
+        num = folder_name.split('_')[-1]
+        args.output_folder = os.path.join(folder_path,
+                                          'fit_noise_{}'.format(num))
     mraux.save_model_fits(out, args.output_folder)
     
     
