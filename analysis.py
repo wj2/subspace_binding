@@ -683,7 +683,7 @@ def estimate_distances(p1_group, p2_group, t_ind=0, n_folds=10,
         return rdm
 
 def fit_stan_models(session_dict, model_path='general/stan_models/lm.pkl',
-                    sigma_prior=1, mu_prior=1, **kwargs):
+                    sigma_prior=1, mu_prior=1, noise_model=False, **kwargs):
     out_dict = {}
     for key, (predictors, targets) in session_dict.items():
         N, K = predictors.shape
@@ -696,6 +696,8 @@ def fit_stan_models(session_dict, model_path='general/stan_models/lm.pkl',
         }
         fits = []
         diags = []
+        if noise_model:
+            model_path = 'general/stan_models/noise.pkl'
         for i in range(targets.shape[1]):
             stan_dict['y'] = targets[:, i]
             _, fit_az, diag = su.fit_model(stan_dict, model_path, **kwargs)
