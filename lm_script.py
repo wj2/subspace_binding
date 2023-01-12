@@ -18,6 +18,8 @@ def create_parser():
                         type=str,
                         help='folder to save the output in')
     parser.add_argument('--stan_iter', default=500, type=int)
+    parser.add_argument('--fit_noise_model', default=False,
+                        action='store_true')
     return parser
 
 if __name__ == '__main__':
@@ -29,7 +31,11 @@ if __name__ == '__main__':
     out = mra.fit_stan_models(
         input_dict,
         iter=args.stan_iter,
+        noise_model=args.fit_noise_model
     )
+    if args.fit_noise_model:
+        num = args.output_folder.split('_')[-1]
+        args.output_folder = 'fit_noise_{}'.format(num)
     mraux.save_model_fits(out, args.output_folder)
     
     

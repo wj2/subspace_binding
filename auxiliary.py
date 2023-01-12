@@ -4,7 +4,10 @@ import numpy as np
 import pandas as pd
 import scipy.io as sio
 import re
-from one.api import One
+import pickle
+
+import arviz as az
+# from one.api import One
 
 bhv_fields_rename = {'trials.included':'include',
                      'trials.visualStim_contrastLeft':'contrastLeft',
@@ -18,12 +21,41 @@ def save_model_fits(fit_dict, output_folder):
     os.mkdir(output_folder)
     for key, item in fit_dict.items():
         for i, fit in enumerate(item[1]):
-            new_path = os.path.join(output_folder, 'azf_{}.nc')
+            new_path = 'azf_{}.nc'.format(i)
             fit.to_netcdf(new_path)
             item[1][i] = new_path
     d_path = os.path.join(output_folder, 'fit_dict.pkl')
     pickle.dump(fit_dict, open(d_path, 'wb'))
     return fit_dict
+
+def load_model_fits(folder):
+    fd_path = os.path.join(folder, 'fit_dict.pkl')
+    fd = pickle.load(open(fd_path, 'rb'))
+    for key, item in fd.items():
+        for i, fit_path in enumerate(item[1]):
+            _, fit_name = os.path.split(fit_path)
+            fit_targ = os.path.join(folder, fit_name)
+            fit = az.from_netcdf(fit_targ)
+            item[1][i] = fit
+    return fd
+
+all_types = ('null', 'null_spline', 'interaction', 'interaction_spline')
+all_nums = range(50 + 1)
+def load_many_fits(folder, types=all_types, nums=all_nums,
+                   template='fit_{type}_{num}'):
+    out_dict = {}
+    for num in nums:
+        n_dict = {}
+        for type_ in types:
+            path = os.path.join(folder, template.format(num=num, type=type_))
+            out_nt = load_model_fits(path)
+            n_dict[type_] = out_nt
+        for k, sess in out_nt.items():
+            (regions, animal, info) = k 
+            for i in range(len(sess[1])):
+                neur_type_dict = {t:n_dict[t][k][1][i] for t in types}
+                out_dict[(regions[i], animal, info, i)] = neur_type_dict
+    return out_dict
 
 def resave_mats(folder, mat_templ='.*\.mat'):
     fls = os.listdir(folder)
