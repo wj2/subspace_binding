@@ -21,9 +21,10 @@ def save_model_fits(fit_dict, output_folder):
     os.mkdir(output_folder)
     for key, item in fit_dict.items():
         for i, fit in enumerate(item[1]):
-            new_path = 'azf_{}.nc'.format(i)
+            name = 'azf_{}.nc'.format(i)
+            new_path = os.path.join(output_folder, name)            
             fit.to_netcdf(new_path)
-            item[1][i] = new_path
+            item[1][i] = name
     d_path = os.path.join(output_folder, 'fit_dict.pkl')
     pickle.dump(fit_dict, open(d_path, 'wb'))
     return fit_dict
