@@ -106,9 +106,9 @@ def get_ccgp_error_dep(pwrs, tradeoffs, n_feats, n_values, n_stim,
                                                  tradeoff,
                                                  hamming_reps=hamming_reps,
                                                  ccgp_reps=ccgp_reps)
-            err_theor[i] = np.mean(out[0], axis=0)
+            err_theor[i] = out[0]
             gen_theor[i] = out[1]
-            swap_theor[i] = np.mean(out[2][-1], axis=0)
+            swap_theor[i] = out[2][-1]
         if empirical:
             out = get_ccgp_error_tradeoff_empirical(pwrs, n_feats, n_values,
                                                     n_stim, tradeoff,

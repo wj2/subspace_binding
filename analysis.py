@@ -11,8 +11,10 @@ import sklearn.svm as skc
 import sklearn.model_selection as skms
 import sklearn.metrics as skm
 import sklearn.decomposition as skd
+import sklearn.utils as sku
 import scipy.stats as sts
 import scipy.io as sio
+import scipy.optimize as sopt
 
 import general.utility as u
 import general.neural_analysis as na
@@ -20,12 +22,814 @@ import general.data_io as gio
 import general.stan_utility as  su
 import multiple_representations.theory as mrt
 import multiple_representations.auxiliary as mraux
-# import rsatoolbox as rsa
+import composite_tangling.code_creation as cc
+import composite_tangling.code_analysis as ca
+import multiple_representations.direct_theory as mrdt
+
+import rsatoolbox as rsa
 
 # import oak.model_utils as mu
 
 visual_regions = ('VISp', 'VISI', 'VISpm', 'VISam', 'VISrl', 'VISa')
 choice_regions = ('MOs', 'PL', 'ILA', 'ORB', 'MOp', 'SSp', 'SCm', 'MRN')
+
+
+def estimate_distances(pwrs, tradeoffs, n_feats, n_vals, n_units=100, n_samples=320,
+                       n_boots=100, sg_resamples=1):
+    est_l = np.zeros((len(pwrs), len(tradeoffs), n_boots, sg_resamples))
+    est_nl = np.zeros_like(est_l)
+    est_sigma = np.zeros_like(est_l)
+    true_l = np.zeros((len(pwrs), len(tradeoffs)))
+    true_nl = np.zeros_like(true_l)
+    pwrs = np.array(pwrs)**2
+
+    rng = np.random.default_rng()
+        
+    for (i, j) in u.make_array_ind_iterator(true_l.shape):
+        dl_t = ca.get_linear_theory_distance(
+            pwrs[i]*tradeoffs[j], n_feats, n_vals
+        )
+        dn_t = ca.get_mixed_theory_distance(
+            pwrs[i]*(1 - tradeoffs[j]), n_feats, n_vals
+        )
+        true_l[i, j] = dl_t
+        true_nl[i, j] = dn_t
+        for k in range(n_boots):
+            code = cc.make_code(tradeoffs[j], pwrs[i], n_feats, n_vals, n_units)
+            stim, reps = code.sample_stim_reps(n_samples)
+
+            stim = np.squeeze(stim)
+            u_stim = np.unique(stim, axis=0)
+            stim_groups = {}
+            for us in u_stim:
+                mask = np.all(stim == us, axis=1)
+                use_reps = reps[mask].T
+                if sg_resamples > 1:
+                    ur_groups = np.zeros((sg_resamples,) + use_reps.shape)
+                    for l in range(sg_resamples):
+                        inds = rng.choice(use_reps.shape[1], use_reps.shape[1])
+                        ur_groups[l] = use_reps[..., inds]
+                    stim_groups[tuple(us)] = np.expand_dims(ur_groups, -1)
+                else:
+                    stim_groups[tuple(us)] = np.expand_dims(use_reps, (0, -1))
+
+            if sg_resamples > 1:
+                out = mrdt.combined_ccgp_bind_est(
+                    (stim_groups[(0, 0)], stim_groups[(0, 1)]),
+                    (stim_groups[(1, 0)], stim_groups[(1, 1)]),
+                )
+                bind_est, gen_est, (d_l, d_n, sigma, sem) = out
+                est_l[i, j, k] = d_l
+                est_nl[i, j, k] = np.mean(d_n, axis=1)*np.sqrt(2)
+                est_sigma[i, j, k] = sigma
+            else:
+                out = mrdt.direct_ccgp_bind_est_pops(
+                    (stim_groups[(0, 0)], stim_groups[(0, 1)]),
+                    (stim_groups[(1, 0)], stim_groups[(1, 1)]),
+                    test_prop=0, empirical=False,
+                )
+                bind_est, gen_est, (d_l, d_n, sigma, sem) = out
+                est_l[i, j, k] = np.mean(d_l)
+                est_nl[i, j, k] = np.mean(d_n, axis=1)*np.sqrt(2)
+                est_sigma[i, j, k] = np.mean(sigma)
+    out = {
+        'dl': (true_l, est_l),
+        'dn': (true_nl, est_nl),
+        'sigma': est_sigma,
+    }
+    return out
+
+
+def estimate_submanifolds(data, tbeg, tend,
+                          dead_perc=30, winsize=300, tstep=300,
+                          pop_resamples=20, kernel='linear',
+                          dec_tzf='Offer 2 on',
+                          early_tzf='Offer 1 on',
+                          decode_var='subj_ev',
+                          min_trials=80, pre_pca=.99,
+                          shuffle_trials=True, c1_targ=2,
+                          c2_targ=3, f1_mask=None, f2_mask=None,
+                          use_split_dec=None,
+                          max_trials=None,
+                          regions=None,
+                          **kwargs):
+    o1_target = '{} offer 1'.format(decode_var)
+    o2_target = '{} offer 2'.format(decode_var)
+    out = _compute_masks(data, o1_target, o2_target, dead_perc=dead_perc,
+                         use_split_dec=use_split_dec, c1_targ=c1_targ,
+                         c2_targ=c2_targ)
+    mask_o1_l, mask_o1_h, mask_o2_l, mask_o2_h = out
+
+    mask_o1_left = data['side of offer 1 (Left = 1 Right =0)'] == 1
+    mask_o1_right = data['side of offer 1 (Left = 1 Right =0)'] == 0
+    mask_o2_left = data['side of offer 1 (Left = 1 Right =0)'] == 0
+    mask_o2_right = data['side of offer 1 (Left = 1 Right =0)'] == 1
+
+    mask_o1_h_left = mask_o1_h.rs_and(mask_o1_left)
+    mask_o1_l_left = mask_o1_l.rs_and(mask_o1_left)
+    mask_o1_h_right = mask_o1_h.rs_and(mask_o1_right)
+    mask_o1_l_right = mask_o1_l.rs_and(mask_o1_right)
+
+    mask_o2_h_left = mask_o2_h.rs_and(mask_o2_left)
+    mask_o2_l_left = mask_o2_l.rs_and(mask_o2_left)
+    mask_o2_h_right = mask_o2_h.rs_and(mask_o2_right)
+    mask_o2_l_right = mask_o2_l.rs_and(mask_o2_right)
+
+    masks_o1 = (
+        mask_o1_h_left,
+        mask_o1_l_left,
+        mask_o1_h_right,
+        mask_o1_l_right,
+    )
+    masks_o2 = (
+        mask_o2_h_left,
+        mask_o2_l_left,
+        mask_o2_h_right,
+        mask_o2_l_right,
+    )
+
+    masks_all = masks_o2 + masks_o1 + masks_o1
+    tzfs_all = ((dec_tzf,)*len(masks_o2) + (dec_tzf,)*len(masks_o1)
+                + (early_tzf,)*len(masks_o1))
+    out = data.make_pseudo_pops(winsize, tbeg, tend, tstep, *masks_all,
+                                tzfs=tzfs_all,
+                                min_trials=min_trials,
+                                resamples=pop_resamples,
+                                regions=regions)
+    xs, pops_all = out
+
+    outs_all = []
+    for i in range(pop_resamples):
+        pops_all_i = tuple(p[i] for p in pops_all)
+        pops_pre = mrdt.rsa_preproc(
+            pops_all_i, (),
+            norm=True, pre_pca=pre_pca, accumulate_time=True,
+            ret_out_pops=True,
+        )
+        outs_all.append(pops_pre)
+
+    return outs_all, xs
+
+
+def scale_matrix(mat, ret_trs=False):
+    mu = np.mean(mat, axis=0, keepdims=True)
+    mat = mat - mu
+    tr = np.trace(mat @ mat.T)
+    out = mat / np.sqrt(tr)
+    if ret_trs:
+        def trs(x):
+            return (x - mu) / np.sqrt(tr)
+        out = (mat, trs)
+    return out
+
+
+def estimate_rdm_conditions(data, tbeg, tend,
+                            dead_perc=30, winsize=300, tstep=300,
+                            pop_resamples=20, kernel='linear',
+                            dec_tzf='Offer 2 on',
+                            decode_var='subj_ev',
+                            min_trials=80, pre_pca=.99,
+                            shuffle_trials=True, c1_targ=2,
+                            c2_targ=3, f1_mask=None, f2_mask=None,
+                            use_split_dec=None,
+                            max_trials=None,
+                            regions=None,
+                            min_neurs=15,
+                            use_pseudo=True,
+                            correct_only=False,
+                            **kwargs):
+    o1_target = '{} offer 1'.format(decode_var)
+    o2_target = '{} offer 2'.format(decode_var)
+    out = _compute_masks(data, o1_target, o2_target, dead_perc=dead_perc,
+                         use_split_dec=use_split_dec, c1_targ=c1_targ,
+                         c2_targ=c2_targ)
+    mask_o1_h, mask_o1_l, mask_o2_h, mask_o2_l = out
+
+    mask_o1_left = data['side of offer 1 (Left = 1 Right =0)'] == 1
+    mask_o1_right = data['side of offer 1 (Left = 1 Right =0)'] == 0
+    mask_o2_left = data['side of offer 1 (Left = 1 Right =0)'] == 0
+    mask_o2_right = data['side of offer 1 (Left = 1 Right =0)'] == 1
+
+    mask_o1_l_left = mask_o1_l.rs_and(mask_o1_left)
+    mask_o1_l_right = mask_o1_l.rs_and(mask_o1_right)
+    mask_o2_l_left = mask_o2_l.rs_and(mask_o2_left)
+    mask_o2_l_right = mask_o2_l.rs_and(mask_o2_right)
+    mask_o1_h_left = mask_o1_h.rs_and(mask_o1_left)
+    mask_o1_h_right = mask_o1_h.rs_and(mask_o1_right)
+    mask_o2_h_left = mask_o2_h.rs_and(mask_o2_left)
+    mask_o2_h_right = mask_o2_h.rs_and(mask_o2_right)
+
+    mask_ll_leftright = mask_o1_l_left.rs_and(mask_o2_l_right)
+    mask_lh_leftright = mask_o1_l_left.rs_and(mask_o2_h_right)
+    mask_hl_leftright = mask_o1_h_left.rs_and(mask_o2_l_right)
+    mask_hh_leftright = mask_o1_h_left.rs_and(mask_o2_h_right)
+
+    mask_ll_rightleft = mask_o1_l_right.rs_and(mask_o2_l_left)
+    mask_lh_rightleft = mask_o1_l_right.rs_and(mask_o2_h_left)
+    mask_hl_rightleft = mask_o1_h_right.rs_and(mask_o2_l_left)
+    mask_hh_rightleft = mask_o1_h_right.rs_and(mask_o2_h_left)
+
+    if correct_only:
+        ch_left_mask = data['Choice left (==1) or Right (==0)'] == 1
+        ch_right_mask = data['Choice left (==1) or Right (==0)'] == 0
+
+        mask_lh_leftright = mask_lh_leftright.rs_and(ch_right_mask)
+        mask_lh_rightleft = mask_lh_rightleft.rs_and(ch_left_mask)
+        mask_hl_leftright = mask_hl_leftright.rs_and(ch_left_mask)
+        mask_hl_rightleft = mask_hl_rightleft.rs_and(ch_right_mask)
+
+    masks_t2 = (
+        mask_ll_leftright,
+        mask_lh_leftright,
+        mask_hl_leftright,
+        mask_hh_leftright,
+        mask_ll_rightleft,
+        mask_lh_rightleft,
+        mask_hl_rightleft,
+        mask_hh_rightleft,
+    )
+
+    if use_pseudo:
+        out = data.make_pseudo_pops(winsize, tbeg, tend, tstep, *masks_t2,
+                                    tzfs=(dec_tzf,)*len(masks_t2),
+                                    min_trials=min_trials,
+                                    resamples=pop_resamples,
+                                    regions=regions)
+        xs, cond_pops_t2 = out
+    else:
+        session_mask = data['n_neurs'] > min_neurs
+        data_n_neurs = data.session_mask(session_mask)
+        out = data_n_neurs._get_dec_pops(winsize, tbeg, tend, tstep, *masks_t2,
+                                         tzfs=(dec_tzf,)*len(masks_t2))
+        xs, cond_pops_t2 = out
+
+        pop_resamples = len(cond_pops_t2[0])
+        # cond_pops_t2 = []
+        # for i in range(pop_resamples):
+        #     cond_pops_t2.append(
+        #         tuple(cond_pops_t2_org[j][i] for j in range(len(cond_pops_t2_org)))
+        #     )
+
+    # print(cond_pops_t2[0].shape)
+    n_stim = len(cond_pops_t2)
+    rdm_mat = np.zeros((pop_resamples, n_stim, n_stim))
+    rdm_list = []
+    pop_mat = []
+    for i in range(pop_resamples):
+        cp_i = tuple(cp[i] for cp in cond_pops_t2)
+        pops_pre = mrdt.rsa_preproc(
+            cp_i, (), norm=True, pre_pca=pre_pca, accumulate_time=True,
+            ret_out_pops=True,
+        )
+        if max_trials is None:
+            max_trials_i = np.min(list(p_i.shape[-1] for p_i in pops_pre))
+        else:
+            max_trials_i = max_trials
+        pops_pre = tuple(p_i[..., :max_trials_i] for p_i in pops_pre)
+        # print(i, pops_pre[0].shape)
+        pops_comb = np.concatenate(pops_pre, axis=1).T
+
+        if use_pseudo:
+            pop_mat.append(np.mean(np.stack(pops_pre, axis=0), axis=2))
+
+        pops = np.squeeze(pops_comb)
+
+        p_mask = np.var(pops, axis=0) > 0
+        pops = pops[:, p_mask]
+
+        stim = list((str(i),)*p_ind.shape[1]
+                    for i, p_ind in enumerate(pops_pre))
+        stim = np.concatenate(stim)
+
+        data = rsa.data.Dataset(pops, obs_descriptors={'stimulus': stim})
+
+        # dof = data.measurements.shape[0] - 1
+        # noise = rsa.data.noise.prec_from_measurements(data, 'stimulus',
+        #                                               dof=None,
+        #                                               method='shrinkage_diag')
+        # print(noise)
+        rdm = rsa.rdm.calc_rdm(data, descriptor='stimulus', noise=None,
+                               method='crossnobis')
+
+        rdm_mat[i] = rdm.get_matrices()[0]
+        rdm_list.append(rdm)
+
+    ambig_dists = get_cond_pairs(rdm_mat)
+    return rdm_mat, rdm_list, ambig_dists, pop_mat
+
+
+default_ambiguities = {
+    # different side-order
+    # value is low for all stimuli
+    "low": ((0, 4),),
+    # trial has the same side-order
+    # but the values switch to different sides
+    # (i.e., left-first + left-high vs left-first + left-low)
+    "same order, side-values flip": ((1, 2), (5, 6)),
+    # trial has different side-order
+    # and the sides switch values
+    # (i.e., left-first + left-high vs. right-first + left-low)
+    "order flips, side-values flip": ((1, 5), (2, 6)),
+    # trial has different side-order
+    # but the sides keep their values
+    # (i.e., left-first + left-high vs. right-first + left-high)
+    "order flips, side-values same": ((1, 6), (2, 5)),
+    # different side-order
+    # value is high for all stimuli
+    "high": ((3, 7),),
+    "offer 1 value": ((0, 2), (1, 3), (4, 6), (5, 7)),
+    "offer 2 value": ((0, 1), (2, 3), (4, 5), (6, 7)),
+}
+
+
+def get_cond_pairs(rdm_mat, ambiguities=None):
+    if ambiguities is None:
+        ambiguities = default_ambiguities
+    ambig_dists = {}
+    for k, inds in ambiguities.items():
+        ambig_dists[k] = np.mean(
+            list(rdm_mat[:, ind[0], ind[1]] for ind in inds), axis=0
+        )
+    return ambig_dists
+
+
+default_full_schema = np.array(
+    [  # val, side, time, (high x left), (low x left),
+        [0,
+         0, 1, 0, 1,  # low on left and low on right
+         0, 1, 0, 1,  # low first and low second
+         1, 0, 0, 0, 0, 0, 0, 0],
+        [1,
+         0, 1, 1, 0,  # low on left and high on right
+         0, 1, 1, 0,  # low first and high second
+         0, 1, 0, 0, 0, 0, 0, 0],
+        [1,
+         1, 0, 0, 1,  # high on left and low on right
+         1, 0, 0, 1,  # high first and low second
+         0, 0, 1, 0, 0, 0, 0, 0],
+        [2,
+         1, 0, 1, 0,  # high on left and high on right
+         1, 0, 1, 0,  # high first and high second
+         0, 0, 0, 1, 0, 0, 0, 0],
+        [0,
+         0, 1, 0, 1,  # low on left and low on right
+         0, 1, 0, 1,  # low first and low second
+         0, 0, 0, 0, 1, 0, 0, 0],
+        [1,
+         1, 0, 0, 1,  # high on left and low on right
+         0, 1, 1, 0,  # low first and high second
+         0, 0, 0, 0, 0, 1, 0, 0],
+        [1,
+         0, 1, 1, 0,  # low on left and high on right
+         1, 0, 0, 1,  # high first and low second
+         0, 0, 0, 0, 0, 0, 1, 0],
+        [2,
+         1, 0, 1, 0,  # high on left and high on right
+         1, 0, 1, 0,  # high first and high second
+         0, 0, 0, 0, 0, 0, 0, 1],
+    ]
+)
+
+
+default_full_schema = np.array(
+    [  # val, side, time, (high x left), (low x left),
+        [0,
+         0, 0,  # low on left and low on right
+         0, 0,  # low first and low second
+         1, 0, 0, 0, 0, 0, 0, 0],
+        [1,
+         0, 1,  # low on left and high on right
+         0, 1,  # low first and high second
+         0, 1, 0, 0, 0, 0, 0, 0],
+        [1,
+         1, 0,  # high on left and low on right
+         1, 0,  # high first and low second
+         0, 0, 1, 0, 0, 0, 0, 0],
+        [2,
+         1, 1,  # high on left and high on right
+         1, 1,  # high first and high second
+         0, 0, 0, 1, 0, 0, 0, 0],
+        [0,
+         0, 0,  # low on left and low on right
+         0, 0,  # low first and low second
+         0, 0, 0, 0, 1, 0, 0, 0],
+        [1,
+         1, 0,  # high on left and low on right
+         0, 1,  # low first and high second
+         0, 0, 0, 0, 0, 1, 0, 0],
+        [1,
+         0, 1,  # low on left and high on right
+         1, 0,  # high first and low second
+         0, 0, 0, 0, 0, 0, 1, 0],
+        [2,
+         1, 1,  # high on left and high on right
+         1, 1,  # high first and high second
+         0, 0, 0, 0, 0, 0, 0, 1],
+    ]
+)
+
+
+def decompose_full_rdm(rdm_mat, schema=default_full_schema):
+    # ds_init = 5*np.abs(sts.norm(0, 1).rvs(4))
+    # ds_init = 5*np.abs(sts.norm(0, 1).rvs(schema.shape[1]))
+    ds_init = 5*np.abs(sts.norm(0, 1).rvs(6))
+
+    def _make_mat(dists):
+        # d_v, d_vs, d_vo, d_vso = dists
+        d_v, d_vs, d_vo, d_vso = dists[:1], dists[1:3], dists[3:5], dists[5:]
+        new_dmat = np.zeros_like(rdm_mat)
+        for (i, j) in it.combinations(range(rdm_mat.shape[0]), 2):
+            sd = np.abs(schema[i] - schema[j])
+            # print(i, j, sd)
+            d_ij = (np.sum(sd[:1]*d_v**2)
+                    + np.sum(sd[1:3]*d_vs**2)
+                    + np.sum(sd[3:5]*d_vo**2)
+                    + np.sum(sd[5:]*d_vso**2))
+            new_dmat[i, j] = d_ij
+            new_dmat[j, i] = d_ij
+        return np.sum((rdm_mat - new_dmat)**2)
+
+    res = sopt.minimize(_make_mat, ds_init,
+                        bounds=((0, None),)*len(ds_init))
+    return res
+
+
+def estimate_choice_corr(data, tbeg, tend,
+                         dead_perc=30, winsize=300, tstep=300,
+                         pop_resamples=20, kernel='linear',
+                         dec_tzf='Offer 2 on',
+                         decode_var='subj_ev',
+                         min_trials=80, pre_pca=.99,
+                         shuffle_trials=False, c1_targ=2,
+                         c2_targ=3, f1_mask=None, f2_mask=None,
+                         use_split_dec=None,
+                         only_pairs=None,
+                         pseudo=False,
+                         n_folds=20,
+                         test_prop=.1,
+                         gap=5,
+                         **kwargs):
+    l_target = '{}_left'.format(decode_var)
+    r_target = '{}_right'.format(decode_var)
+    side_diffs = data[l_target] - data[r_target]
+    l_opt = side_diffs > gap
+    r_opt = side_diffs < -gap
+    ch_left = data['Choice left (==1) or Right (==0)'] == 1
+    ch_right = data['Choice left (==1) or Right (==0)'] == 0
+
+    o1_target = '{} offer 1'.format(decode_var)
+    o2_target = '{} offer 2'.format(decode_var)
+    time_diffs = data[o1_target] - data[o2_target]
+    o1_opt = time_diffs > gap
+    o2_opt = time_diffs < -gap
+    ch_o1 = data['choice offer 1 (==1) or 2 (==0)'] == 1
+    ch_o2 = data['choice offer 1 (==1) or 2 (==0)'] == 0
+
+    out_dict = {}
+    mask_pairs = {
+        "side choice":
+        (((l_opt.rs_and(ch_left), r_opt.rs_and(ch_right)),
+          (l_opt.rs_and(ch_right), r_opt.rs_and(ch_left))),
+         1),
+        "time choice":
+        (((o1_opt.rs_and(ch_o1), o2_opt.rs_and(ch_o2)),
+          (o1_opt.rs_and(ch_o2), o2_opt.rs_and(ch_o1))),
+         1),
+    }
+    if only_pairs is not None:
+        use_keys = only_pairs
+    else:
+        use_keys = mask_pairs.keys()
+    for k in use_keys:
+        ((dec_mask, targ_mask), min_factor) = mask_pairs[k]
+        mask_c1, mask_c2 = dec_mask
+        gen_mask_c1, gen_mask_c2 = targ_mask
+        print(k)
+        out1 = data.decode_masks(mask_c1, mask_c2, winsize, tbeg, tend, tstep,
+                                 pseudo=pseudo, time_zero_field=dec_tzf,
+                                 min_trials_pseudo=min_trials/min_factor,
+                                 resample_pseudo=pop_resamples, ret_pops=True,
+                                 shuffle_trials=shuffle_trials, pre_pca=pre_pca,
+                                 decode_tzf=dec_tzf, decode_m1=gen_mask_c1,
+                                 decode_m2=gen_mask_c2, n_folds=n_folds,
+                                 test_prop=test_prop, **kwargs)
+        out_dict[k] = out1
+
+    return out_dict
+
+
+def estimate_bhv_corr(data, tbeg, tend,
+                      dead_perc=30, winsize=300, tstep=300,
+                      pop_resamples=20, kernel='linear',
+                      dec_tzf='Offer 2 on',
+                      decode_var='subj_ev',
+                      min_trials=80, pre_pca=.99,
+                      shuffle_trials=False, c1_targ=2,
+                      c2_targ=3, f1_mask=None, f2_mask=None,
+                      use_split_dec=None,
+                      only_pairs=None,
+                      pseudo=False,
+                      only_main=True,
+                      n_folds=20,
+                      test_prop=.05,
+                      **kwargs):
+    l_target = '{}_left'.format(decode_var)
+    r_target = '{}_right'.format(decode_var)
+    out = _compute_masks(data, l_target, r_target, dead_perc=dead_perc,
+                         use_split_dec=use_split_dec, c1_targ=c1_targ, c2_targ=c2_targ)
+    mask_H_L, mask_L_L, mask_H_R, mask_L_R = out
+
+    o1_target = '{} offer 1'.format(decode_var)
+    o1_left_mask = data['side of offer 1 (Left = 1 Right =0)'] == 1
+    o1_right_mask = data['side of offer 1 (Left = 1 Right =0)'] == 0
+    out = _compute_masks(data, o1_target, o1_target, dead_perc=dead_perc,
+                         use_split_dec=use_split_dec, dec_mask=o1_left_mask,
+                         gen_mask=o1_right_mask, c1_targ=c1_targ, c2_targ=c2_targ)
+    mask_o1_H_L, mask_o1_L_L, mask_o1_H_R, mask_o1_L_R = out
+
+    o2_target = '{} offer 2'.format(decode_var)
+    o2_left_mask = data['side of offer 1 (Left = 1 Right =0)'] == 0
+    o2_right_mask = data['side of offer 1 (Left = 1 Right =0)'] == 1
+    out = _compute_masks(data, o2_target, o2_target, dead_perc=dead_perc,
+                         use_split_dec=use_split_dec, dec_mask=o2_left_mask,
+                         gen_mask=o2_right_mask, c1_targ=c1_targ, c2_targ=c2_targ)
+    mask_o2_H_L, mask_o2_L_L, mask_o2_H_R, mask_o2_L_R = out
+
+    out = _compute_masks(data, o1_target, o2_target, dead_perc=dead_perc,
+                         use_split_dec=use_split_dec, c1_targ=c1_targ, c2_targ=c2_targ)
+    mask_H_o1, mask_L_o1, mask_H_o2, mask_L_o2 = out
+
+    ch_left_mask = data['Choice left (==1) or Right (==0)'] == 1
+    ch_right_mask = data['Choice left (==1) or Right (==0)'] == 0
+    ch_o1_mask = data['choice offer 1 (==1) or 2 (==0)'] == 1
+    ch_o2_mask = data['choice offer 1 (==1) or 2 (==0)'] == 0
+
+    out_dict = {}
+    mask_pairs = {
+        'left-higher vs right-higher 1 corr': ((
+            (mask_o1_L_L.rs_and(mask_o2_H_R).rs_and(ch_o2_mask),
+             mask_o1_H_L.rs_and(mask_o2_L_R).rs_and(ch_o1_mask)),
+            (mask_o1_H_R.rs_and(mask_o2_L_L).rs_and(ch_o1_mask),
+             mask_o1_L_R.rs_and(mask_o2_H_L).rs_and(ch_o2_mask))),
+                                        2),
+        'left-higher vs right-higher 1 err': ((
+            (mask_o1_L_L.rs_and(mask_o2_H_R).rs_and(ch_o2_mask),
+             mask_o1_H_L.rs_and(mask_o2_L_R).rs_and(ch_o1_mask)),
+            (mask_o1_H_R.rs_and(mask_o2_L_L).rs_and(ch_o2_mask),
+             mask_o1_L_R.rs_and(mask_o2_H_L).rs_and(ch_o1_mask))),
+                                        2),
+        'left-higher vs right-higher 2 corr': ((
+            (mask_o1_H_R.rs_and(mask_o2_L_L).rs_and(ch_o1_mask),
+             mask_o1_L_R.rs_and(mask_o2_H_L).rs_and(ch_o2_mask)),
+            (mask_o1_L_L.rs_and(mask_o2_H_R).rs_and(ch_o2_mask),
+             mask_o1_H_L.rs_and(mask_o2_L_R).rs_and(ch_o1_mask))),
+                                        2),
+        'left-higher vs right-higher 2 err': ((
+            (mask_o1_H_R.rs_and(mask_o2_L_L).rs_and(ch_o1_mask),
+             mask_o1_L_R.rs_and(mask_o2_H_L).rs_and(ch_o2_mask)),
+            (mask_o1_L_L.rs_and(mask_o2_H_R).rs_and(ch_o1_mask),
+             mask_o1_H_L.rs_and(mask_o2_L_R).rs_and(ch_o2_mask))),
+                                        2),
+        'left-higher vs right-higher -- no order': (
+            ((mask_L_L.rs_and(mask_H_R).rs_and(ch_right_mask),
+              mask_H_L.rs_and(mask_L_R).rs_and(ch_left_mask)),
+             (mask_L_L.rs_and(mask_H_R).rs_and(ch_left_mask),
+              mask_H_L.rs_and(mask_L_R).rs_and(ch_right_mask))),
+            1),
+        'first-higher vs second-higher 1 corr': ((
+            (mask_o1_L_L.rs_and(mask_o2_H_R).rs_and(ch_o2_mask),
+             mask_o1_H_L.rs_and(mask_o2_L_R).rs_and(ch_o1_mask)),
+            (mask_o1_L_R.rs_and(mask_o2_H_L).rs_and(ch_o2_mask),
+             mask_o1_H_R.rs_and(mask_o2_L_L).rs_and(ch_o1_mask))),
+                                        2),
+        'first-higher vs second-higher 1 err': ((
+            (mask_o1_L_L.rs_and(mask_o2_H_R).rs_and(ch_o2_mask),
+             mask_o1_H_L.rs_and(mask_o2_L_R).rs_and(ch_o1_mask)),
+            (mask_o1_L_R.rs_and(mask_o2_H_L).rs_and(ch_o1_mask),
+             mask_o1_H_R.rs_and(mask_o2_L_L).rs_and(ch_o2_mask))),
+                                        2),
+        'first-higher vs second-higher 2 corr': ((
+            (mask_o1_L_R.rs_and(mask_o2_H_L).rs_and(ch_o2_mask),
+             mask_o1_H_R.rs_and(mask_o2_L_L).rs_and(ch_o1_mask)),
+            (mask_o1_L_L.rs_and(mask_o2_H_R).rs_and(ch_o2_mask),
+             mask_o1_H_L.rs_and(mask_o2_L_R).rs_and(ch_o1_mask)),
+        ),
+                                                 2),
+        'first-higher vs second-higher 2 err': ((
+            (mask_o1_L_R.rs_and(mask_o2_H_L).rs_and(ch_o2_mask),
+             mask_o1_H_R.rs_and(mask_o2_L_L).rs_and(ch_o1_mask)),
+            (mask_o1_L_L.rs_and(mask_o2_H_R).rs_and(ch_o1_mask),
+             mask_o1_H_L.rs_and(mask_o2_L_R).rs_and(ch_o2_mask)),
+        ),
+                                                2),
+        'first-higher vs second-higher -- no side': (
+            ((mask_L_o1.rs_and(mask_H_o2).rs_and(ch_o2_mask),
+              mask_H_o1.rs_and(mask_L_o2).rs_and(ch_o1_mask)),
+             (mask_L_o1.rs_and(mask_H_o2).rs_and(ch_o1_mask),
+              mask_H_o1.rs_and(mask_L_o2).rs_and(ch_o2_mask))),
+            1),
+    }
+
+    if only_main:
+        only_pairs = (
+            'first-higher vs second-higher -- no side',
+            'left-higher vs right-higher -- no order',
+        )
+    if only_pairs is not None:
+        use_keys = only_pairs
+    else:
+        use_keys = mask_pairs.keys()
+    for k in use_keys:
+        ((dec_mask, targ_mask), min_factor) = mask_pairs[k]
+        mask_c1, mask_c2 = dec_mask
+        gen_mask_c1, gen_mask_c2 = targ_mask
+        print(k)
+        out1 = data.decode_masks(mask_c1, mask_c2, winsize, tbeg, tend, tstep,
+                                 pseudo=pseudo, time_zero_field=dec_tzf,
+                                 min_trials_pseudo=min_trials/min_factor,
+                                 resample_pseudo=pop_resamples, ret_pops=True,
+                                 shuffle_trials=shuffle_trials, pre_pca=pre_pca,
+                                 decode_tzf=dec_tzf, decode_m1=gen_mask_c1,
+                                 decode_m2=gen_mask_c2, n_folds=n_folds,
+                                 test_prop=test_prop,
+                                 n_jobs=1, **kwargs)
+        out_dict[k] = out1
+
+    return out_dict
+
+
+def estimate_decoding_late(data, tbeg, tend,
+                           dead_perc=30, winsize=300, tstep=300,
+                           pop_resamples=20, kernel='linear',
+                           dec_tzf='Offer 2 on',
+                           decode_var='subj_ev',
+                           min_trials=80, pre_pca=.99,
+                           shuffle_trials=True, c1_targ=2,
+                           c2_targ=3, f1_mask=None, f2_mask=None,
+                           use_split_dec=None,
+                           only_pairs=None,
+                           **kwargs):
+    l_target = '{}_left'.format(decode_var)
+    r_target = '{}_right'.format(decode_var)
+    out = _compute_masks(data, l_target, r_target, dead_perc=dead_perc,
+                         use_split_dec=use_split_dec, c1_targ=c1_targ, c2_targ=c2_targ)
+    mask_L_L, mask_H_L, mask_L_R, mask_H_R = out
+
+    o1_target = '{} offer 1'.format(decode_var)
+    o1_left_mask = data['side of offer 1 (Left = 1 Right =0)'] == 1
+    o1_right_mask = data['side of offer 1 (Left = 1 Right =0)'] == 0
+    out = _compute_masks(data, o1_target, o1_target, dead_perc=dead_perc,
+                         use_split_dec=use_split_dec, dec_mask=o1_left_mask,
+                         gen_mask=o1_right_mask, c1_targ=c1_targ, c2_targ=c2_targ)
+    mask_o1_L_L, mask_o1_H_L, mask_o1_L_R, mask_o1_H_R = out
+
+    o2_target = '{} offer 2'.format(decode_var)
+    o2_left_mask = data['side of offer 1 (Left = 1 Right =0)'] == 0
+    o2_right_mask = data['side of offer 1 (Left = 1 Right =0)'] == 1
+    out = _compute_masks(data, o2_target, o2_target, dead_perc=dead_perc,
+                         use_split_dec=use_split_dec, dec_mask=o2_left_mask,
+                         gen_mask=o2_right_mask, c1_targ=c1_targ, c2_targ=c2_targ)
+    mask_o2_L_L, mask_o2_H_L, mask_o2_L_R, mask_o2_H_R = out
+
+    out = _compute_masks(data, o1_target, o2_target, dead_perc=dead_perc,
+                         use_split_dec=use_split_dec, c1_targ=c1_targ, c2_targ=c2_targ)
+    mask_L_o1, mask_H_o1, mask_L_o2, mask_H_o2 = out
+
+    ch_left_mask = data['Choice left (==1) or Right (==0)'] == 1
+    ch_right_mask = data['Choice left (==1) or Right (==0)'] == 0
+    ch_o1_mask = data['choice offer 1 (==1) or 2 (==0)'] == 1
+    ch_o2_mask = data['choice offer 1 (==1) or 2 (==0)'] == 0
+
+    out_dict = {}
+    mask_pairs = {
+        'choice time': (((ch_o1_mask.rs_and(o1_left_mask),
+                          ch_o2_mask.rs_and(o1_left_mask)),
+                        (ch_o1_mask.rs_and(o1_right_mask),
+                         ch_o2_mask.rs_and(o1_right_mask))),
+                        1),
+        'choice side': (((ch_left_mask.rs_and(o1_left_mask),
+                         ch_right_mask.rs_and(o1_left_mask)),
+                        (ch_left_mask.rs_and(o1_right_mask),
+                         ch_right_mask.rs_and(o1_right_mask))),
+                        1),
+        # value decoder for left, generalizing to right
+        'offer 1': (((mask_o1_L_L,
+                      mask_o1_H_L),
+                     (mask_o1_L_R,
+                      mask_o1_H_R)),
+                    1),
+        'offer 2': (((mask_o2_L_L,
+                      mask_o2_H_L),
+                     (mask_o2_L_R,
+                      mask_o2_H_R)),
+                    1),
+        # decoder for higher side (right higher vs left higher)
+        # generalizing across presentation order
+        'left-higher vs right-higher -- no order': (((mask_L_L.rs_and(mask_H_R),
+                                                      mask_H_L.rs_and(mask_L_R)),
+                                                     (mask_L_L.rs_and(mask_H_R),
+                                                      mask_H_L.rs_and(mask_L_R))),
+                                                    1),
+        'left-higher vs right-higher': (((mask_o1_L_L.rs_and(mask_o2_H_R),
+                                          mask_o1_H_L.rs_and(mask_o2_L_R)),
+                                         (mask_o1_H_R.rs_and(mask_o2_L_L),
+                                          mask_o1_L_R.rs_and(mask_o2_H_L))),
+                                        2),
+        'first-higher vs second-higher -- no side': (((mask_L_o1.rs_and(mask_H_o2),
+                                                       mask_H_o1.rs_and(mask_L_o2)),
+                                                      (mask_L_o1.rs_and(mask_H_o2),
+                                                       mask_H_o1.rs_and(mask_L_o2))),
+                                                     1),
+        'first-higher vs second-higher': (((mask_o1_L_L.rs_and(mask_o2_H_R),
+                                            mask_o1_H_L.rs_and(mask_o2_L_R)),
+                                           (mask_o1_L_R.rs_and(mask_o2_H_L),
+                                            mask_o1_H_R.rs_and(mask_o2_L_L))),
+                                          2),
+        'offer order': (((o1_left_mask, o1_right_mask),
+                         (o2_right_mask, o2_left_mask)),
+                        .5),
+    }
+
+    if only_pairs is not None:
+        use_keys = only_pairs
+    else:
+        use_keys = mask_pairs.keys()
+    for k in use_keys:
+        ((dec_mask, targ_mask), min_factor) = mask_pairs[k]
+        mask_c1, mask_c2 = dec_mask
+        gen_mask_c1, gen_mask_c2 = targ_mask
+        out1 = data.decode_masks(mask_c1, mask_c2, winsize, tbeg, tend, tstep,
+                                 pseudo=True, time_zero_field=dec_tzf,
+                                 min_trials_pseudo=min_trials/min_factor,
+                                 resample_pseudo=pop_resamples, ret_pops=True,
+                                 shuffle_trials=shuffle_trials, pre_pca=pre_pca,
+                                 decode_tzf=dec_tzf, decode_m1=gen_mask_c1,
+                                 decode_m2=gen_mask_c2, **kwargs)
+        out2 = data.decode_masks(gen_mask_c1, gen_mask_c2, winsize, tbeg, tend, tstep,
+                                 pseudo=True, time_zero_field=dec_tzf,
+                                 min_trials_pseudo=min_trials/min_factor,
+                                 resample_pseudo=pop_resamples, ret_pops=True,
+                                 shuffle_trials=shuffle_trials, pre_pca=pre_pca,
+                                 decode_tzf=dec_tzf, decode_m1=mask_c1,
+                                 decode_m2=mask_c2, **kwargs)
+        out_dict[k] = (out1, out2)
+
+    return out_dict
+
+
+def estimate_decoding_regions(*args, **kwargs):
+    return _estimate_across_regions(*args, func=estimate_decoding_late, **kwargs)
+
+
+def estimate_rdm_regions(*args, **kwargs):
+    return _estimate_across_regions(*args, func=estimate_rdm_conditions, **kwargs)
+
+
+def _estimate_across_regions(
+    data,
+    tbeg,
+    tend,
+    region_list=('OFC', 'PCC', 'pgACC', 'vmPFC', 'VS', None),
+    func=estimate_decoding_late,
+    **kwargs
+):
+    out_dict = {}
+    for region in region_list:
+        if region == "all":
+            use_region = None
+        elif region is not None:
+            use_region = (region,)
+        else:
+            use_region = None
+
+        out_dict[region] = func(
+            data,
+            tbeg,
+            tend,
+            regions=use_region,
+            **kwargs,
+        )
+    return out_dict
+
+
+def make_prediction_pops(dec_dict, **kwargs):
+    out_dict = {}
+    for region, r_dict in dec_dict.items():
+        r_cond_dict = {}
+        for cond, (o1, o2) in r_dict.items():
+            (_, _, p1_o1, p2_o1, p3_o1, p4_o1, _) = o1
+            out_o1 = mrdt.direct_ccgp_bind_est_pops(
+                (p1_o1, p2_o1), (p3_o1, p4_o1), **kwargs
+            )
+
+            (_, _, p1_o2, p2_o2, p3_o2, p4_o2, _) = o2
+            out_o2 = mrdt.direct_ccgp_bind_est_pops(
+                (p1_o2, p2_o2), (p3_o2, p4_o2), **kwargs
+            )
+            r_cond_dict[cond] = (out_o1, out_o2)
+        out_dict[region] = r_cond_dict
+    return out_dict
+
 
 def _gen_pops(c1_list, c2_list, pop, all_cons=True):
     if all_cons:
@@ -39,7 +843,7 @@ def _gen_pops(c1_list, c2_list, pop, all_cons=True):
             pop2 = pop[c1_mask]
             yield (c1_con_list, c2_con_list, pop1, pop2)
     else:
-        yield (c1_list, c2_list, pop, pop)    
+        yield (c1_list, c2_list, pop, pop)
 
 def contrast_regression(data, tbeg, tend, binsize=None, binstep=None,
                         include_field='include',
@@ -637,100 +1441,194 @@ def shared_subspace_from_pops(p1_group, p2_group, t_ind=0, n_folds=10,
         else:
             p1_i = p1_i[..., t_ind]
             p2_i = p2_i[..., t_ind]
-                                       
+
         tv, trs_v = shared_subspace(p1_i.T, p2_i.T, n_folds=n_folds, **kwargs)
-        
+
         out_same[i] = tv
         out_diff[i] = trs_v
     return out_same, out_diff
 
-def estimate_distances(p1_group, p2_group, t_ind=0, n_folds=10,
-                       concatenate_time=True, max_trials=100,
-                       **kwargs):
-    p1_group = tuple(p_i[..., :max_trials, :] for p_i in p1_group)
-    p2_group = tuple(p_i[..., :max_trials, :] for p_i in p2_group)
-    p1_comb = np.concatenate(p1_group, axis=3)
-    p2_comb = np.concatenate(p2_group, axis=3)
-    
-    for i, p1_i in enumerate(p1_comb):
-        p2_i = np.squeeze(p2_comb[i])
-        p1_i = np.squeeze(p1_i)
-        if concatenate_time:
-            p1_i = np.concatenate(list(p1_i[..., j]
-                                       for j in range(p1_i.shape[-1])),
-                                  axis=0)
-            p2_i = np.concatenate(list(p2_i[..., j]
-                                       for j in range(p2_i.shape[-1])),
-                                  axis=0)
-        else:
-            p1_i = p1_i[..., t_ind]
-            p2_i = p2_i[..., t_ind]
 
-        p_all = np.concatenate((p1_i, p2_i), axis=1).T
-        p_mask = np.sum(p_all, axis=0) > 0
-        p_all = p_all[:, p_mask]
-        
-        stim = list((str(i),)*p_ind.shape[3]
-                    for i, p_ind in enumerate(p1_group + p2_group))
-        stim = np.concatenate(stim)
-        data = rsa.data.Dataset(p_all, obs_descriptors={'stimulus':stim})
-        # print(data.get_measurements_tensor('stimulus')[0])
-        noise = rsa.data.noise.prec_from_measurements(data, 'stimulus',
-                                                      p1_group[0].shape[3] - 1,
-                                                      method='shrinkage_diag')
-        rdm = rsa.rdm.calc_rdm(data, descriptor='stimulus', noise=noise,
-                               method='crossnobis')
-        return rdm
-
-def fit_stan_models(session_dict, model_path='general/stan_models/lm.pkl',
-                    sigma_prior=1, mu_prior=1, noise_model=False, **kwargs):
+def fit_bootstrap_models(session_dict, n_boots=100, model=sklm.Ridge,
+                         fit_separately=False, **kwargs):
     out_dict = {}
     for key, (predictors, targets) in session_dict.items():
-        N, K = predictors.shape
-        stan_dict = {
-            'N':N,
-            'K':K,
-            'x':predictors,
-            'sigma_std_prior':sigma_prior,
-            'mu_std_prior':mu_prior,
-        }
-        fits = []
-        diags = []
-        if noise_model:
-            model_path = 'general/stan_models/noise.pkl'
-        for i in range(targets.shape[1]):
-            stan_dict['y'] = targets[:, i]
-            _, fit_az, diag = su.fit_model(stan_dict, model_path, **kwargs)
-            fits.append(fit_az)
-            diags.append(diag)
-        stan_dict['y'] = targets
+        mat1 = np.zeros((n_boots, targets.shape[1], predictors.shape[1]))
+        mat2 = np.zeros((n_boots, targets.shape[1], predictors.shape[1]))
+
+        inter1 = np.zeros((n_boots, targets.shape[1], 1))
+        inter2 = np.zeros((n_boots, targets.shape[1], 1))
+        for i in range(n_boots):
+            pred1, targ1 = sku.resample(predictors, targets)
+            pred2, targ2 = sku.resample(predictors, targets)
+            m1 = model()
+            m2 = model()
+            if not fit_separately:
+                m1.fit(pred1, targ1)
+                m2.fit(pred2, targ2)
+                mat1[i] = m1.coef_
+                mat2[i] = m2.coef_
+                inter1[i] = np.expand_dims(m1.intercept_, 1)
+                inter2[i] = np.expand_dims(m2.intercept_, 1)
+            else:
+                for j in range(targ1.shape[1]):
+                    m1 = model()
+                    m2 = model()
+                    m1.fit(pred1, targ1[:, j])
+                    m2.fit(pred2, targ2[:, j])
+                    mat1[i, j] = m1.coef_
+                    mat2[i, j] = m2.coef_
+                    inter1[i, j] = m1.intercept_
+                    inter2[i, j] = m2.intercept_
+        out_dict[key] = ((mat1, inter1), (mat2, inter2))
+    return out_dict      
+
+def compute_alignment_index(s1, s2, thresh=1e-10):
+    if len(s1.shape) == 2:
+        s1 = np.expand_dims(s1, 0)
+        s2 = np.expand_dims(s2, 0)
+    ais = np.zeros(len(s1))
+    for i, s1_i in enumerate(s1):
+        s2_i = s2[i]
+        p1 = skd.PCA()
+        p1.fit(s1_i)
+        p2 = skd.PCA()
+        p2.fit(s2_i)
+        mask1 = p1.explained_variance_ratio_ > thresh
+        u1 = p1.components_[mask1].T
+        mask2 = p2.explained_variance_ratio_ > thresh
+        u2 = p2.components_[mask2].T
+
+        norm = min(u1.shape[1], u2.shape[1])
+        ais[i] = np.trace(u1.T @ u2 @ u2.T @ u1)/norm
+    return ais
+
+def compute_corr(s1, s2, pearson_brown=None):
+    if len(s1.shape) == 2:
+        s1 = np.expand_dims(s1, 0)
+        s2 = np.expand_dims(s2, 0)
+    s1_uv = u.make_unit_vector(s1[:, 0] - s1[:, -1])
+    s2_uv = u.make_unit_vector(s2[:, 0] - s2[:, -1])
+    r = np.sum(s1_uv*s2_uv, axis=1)
+    if pearson_brown is not None:
+        r = pearson_brown*r/(1 + (pearson_brown - 1)*r)
+    return r
+        
+def fit_split_half_models(session_dict, n_splits=100,
+                          cv=skms.ShuffleSplit,
+                          **kwargs):
+    out_dict = {}
+    for key, (predictors, targets) in session_dict.items():
+        splitter = cv(n_splits=n_splits, test_size=.5)
+        mat1 = np.zeros((n_splits, targets.shape[1], predictors.shape[1]))
+        mat2 = np.zeros((n_splits, targets.shape[1], predictors.shape[1]))
+        for i, (inds1, inds2) in enumerate(splitter.split(predictors)):
+            pred1 = predictors[inds1]
+            targ1 = targets[inds1]
+            pred2 = predictors[inds2]
+            targ2 = targets[inds2]
+            m1 = sklm.Ridge()
+            m1.fit(pred1, targ1)
+            m2 = sklm.Ridge()
+            m2.fit(pred2, targ2)
+            mat1[i] = m1.coef_
+            mat2[i] = m2.coef_
+        out_dict[key] = (mat1, mat2)
+    return out_dict      
+
+
+def _make_dict_and_fit(predictors, targets, sigma_prior=1, mu_prior=1,
+                       noise_model=False,
+                       model_path='general/stan_models/lm.pkl',
+                       **kwargs):
+    N, K = predictors.shape
+    stan_dict = {
+        'N':N,
+        'K':K,
+        'x':predictors,
+        'sigma_std_prior':sigma_prior,
+        'mu_std_prior':mu_prior,
+    }
+    fits = []
+    diags = []
+    if noise_model:
+        model_path = 'general/stan_models/noise.pkl'
+    for i in range(targets.shape[1]):
+        stan_dict['y'] = targets[:, i]
+        _, fit_az, diag = su.fit_model(stan_dict, model_path, **kwargs)
+        fits.append(fit_az)
+        diags.append(diag)
+    stan_dict['y'] = targets
+    return stan_dict, fits, diags
+
+
+def fit_stan_models(session_dict, **kwargs):
+    out_dict = {}
+    for key, (predictors, targets) in session_dict.items():
+        stan_dict, fits, diags = _make_dict_and_fit(predictors, targets,
+                                                    **kwargs)
         out_dict[key] = (stan_dict, fits, diags)
     return out_dict      
+
 
 def make_model_alternatives(
         data,
         save_size=1,
         folder='multiple_representations/model_dicts/',
+        add="",
         **kwargs
 ):
     params_dicts = {
-        'null':{'include_interaction':False,},
-        'interaction':{'include_interaction':True,},
-        'null_spline':{'transform_value':True,},
-        'interaction_spline':{'include_interaction':False,
-                              'transform_value':True},
+        'null': {'include_interaction': False},
+        'interaction': {'include_interaction': True},
+        'null_spline': {'transform_value': True, 'include_interaction': False},
+        'interaction_spline': {'include_interaction': True,
+                               'transform_value': True},
     }
     model_dicts = {}
+    if len(add) > 0:
+        add = "_" + add
     for key, params in params_dicts.items():
         new_kwargs = {}
         new_kwargs.update(kwargs)
         new_kwargs.update(params)
         session_dict = make_predictor_matrices(data, **new_kwargs)
-        template = 'sd_{}'.format(key) + '_{}.pkl'
+        template = 'sd{}_{}'.format(add, key) + '_{}.pkl'
         num = split_and_save_subdicts(session_dict, folder, template=template,
                                       save_size=save_size)
         model_dicts[key] = session_dict
     return model_dicts, num
+
+
+def make_psth_val_avg(
+        data,
+        targ_date,
+        neur_ind,
+        val1_key='subj_ev offer 1',
+        val2_key='subj_ev offer 2',
+        side_key='side of offer 1 (Left = 1 Right =0)',
+        o1_on_key='Offer 1 on',
+        o2_on_key='Offer 2 on',
+        t_beg=-100,
+        t_end=1000,
+        twin=100,
+        tstep=20,
+):
+    data_red = data.session_mask(data['date'] == targ_date)
+    v1 = data_red[val1_key][0]
+    v2 = data_red[val2_key][0]
+    side1 = data_red[side_key][0]
+    side2 = np.logical_not(side1)
+    act1, xs = data_red.get_neural_activity(twin, t_beg, t_end, stepsize=tstep,
+                                            time_zero_field=o1_on_key)
+    act2, xs = data_red.get_neural_activity(twin, t_beg, t_end, stepsize=tstep,
+                                            time_zero_field=o2_on_key)
+    vs = np.concatenate((v1, v2), axis=0)
+    act = np.concatenate((act1[0], act2[0]), axis=0)
+    sides = np.concatenate((side1, side2), axis=0)
+    sides[sides == 0] = -1
+    return xs, act[:, neur_ind], vs, sides
+
 
 def make_predictor_matrices(
         data,
@@ -747,6 +1645,8 @@ def make_predictor_matrices(
         transform_value=False,
         spline_knots=4,
         spline_degree=2,
+        single_time=False,
+        t1_only=False,
 ):
     session_dicts = {}
     for i, session in data.data.iterrows():
@@ -764,13 +1664,11 @@ def make_predictor_matrices(
         sides2 = np.zeros((len(side), 1))
         sides2[side == 0, 0] = 1
         sides2[side == 1, 0] = -1
-        
-        val_mask = np.array([True, False])
-        side_mask = np.array([False, True])
+
         p1 = np.concatenate((val1, sides1), axis=1)
         p2 = np.concatenate((val2, sides2), axis=1)
         predictors = np.concatenate((p1, p2), axis=0)
-        
+
         o1_timing = session.data[o1_on_key]
         resp1 = _get_window(session.data.psth, o1_timing, t_beg, t_end,
                             timing)
@@ -780,25 +1678,51 @@ def make_predictor_matrices(
         targets = np.concatenate((resp1, resp2), axis=0)
         if norm_targets:
             targets = skp.StandardScaler().fit_transform(targets)
-        if transform_value:
-            st = skp.SplineTransformer(n_knots=spline_knots,
-                                       degree=spline_degree,
-                                       include_bias=False)
-            new_val = st.fit_transform(predictors[:, val_mask])
-            predictors = np.concatenate((new_val, predictors[:, side_mask]),
-                                        axis=1)
-            val_mask = np.array([True]*new_val.shape[1] + [False])
-            side_mask = np.logical_not(val_mask)            
-        if norm_value:
-            predictors[:, val_mask] = skp.StandardScaler().fit_transform(
-                predictors[:, val_mask]
-            )
-        if include_interaction:
-            inter_term = predictors[:, val_mask]*predictors[:, side_mask]
-            predictors = np.concatenate((predictors, inter_term),
-                                        axis=1)
+
+        predictors = form_predictors(
+            predictors,
+            transform_value=transform_value,
+            norm_value=norm_value,
+            include_interaction=include_interaction,
+            spline_knots=spline_knots,
+            spline_degree=spline_degree,
+        )
+        if single_time:
+            half = int(predictors.shape[0] / 2)
+            targets = targets[half:]
+            preds1 = predictors[:half]
+            preds2 = predictors[half:]
+            predictors = np.concatenate((preds1, preds2), axis=1)
+        elif t1_only:
+            half = int(predictors.shape[0] / 2)
+            targets = targets[:half]
+            predictors = predictors[:half]
         session_dicts[(region, animal, date)] = (predictors, targets)
     return session_dicts
+
+
+def form_predictors(predictors, transform_value=False, norm_value=True,
+                    include_interaction=True, spline_knots=4, spline_degree=2):
+    val_mask = np.array([True, False])
+    side_mask = np.array([False, True])
+    if transform_value:
+        st = skp.SplineTransformer(n_knots=spline_knots,
+                                   degree=spline_degree,
+                                   include_bias=False)
+        new_val = st.fit_transform(predictors[:, val_mask])
+        predictors = np.concatenate((new_val, predictors[:, side_mask]),
+                                    axis=1)
+        val_mask = np.array([True]*new_val.shape[1] + [False])
+        side_mask = np.logical_not(val_mask)            
+    if norm_value:
+        predictors[:, val_mask] = skp.StandardScaler().fit_transform(
+            predictors[:, val_mask]
+        )
+    if include_interaction:
+        inter_term = predictors[:, val_mask]*predictors[:, side_mask]
+        predictors = np.concatenate((predictors, inter_term),
+                                    axis=1)
+    return predictors
 
 def split_and_save_subdicts(session_dict, folder, template='sd_{}.pkl',
                             save_size=1):
@@ -1194,11 +2118,19 @@ def generalization_analysis(data, tbeg, tend, dec_field, gen_field,
                             shuffle_trials=True, c1_targ=2,
                             c2_targ=3, f1_mask=None, f2_mask=None,
                             use_split_dec=None,
+                            correct_only=False,
                             **kwargs):
     out = _compute_masks(data, dec_field, gen_field, dead_perc=dead_perc,
                          use_split_dec=use_split_dec, dec_mask=f1_mask,
                          gen_mask=f2_mask, c1_targ=c1_targ, c2_targ=c2_targ)
     mask_c1, mask_c2, gen_mask_c1, gen_mask_c2 = out
+    print(correct_only)
+    if correct_only:
+        choice_mask = data['subj_ev_chosen'] - data['subj_ev_unchosen'] > 0
+        mask_c1 = mask_c1.rs_and(choice_mask)
+        mask_c2 = mask_c2.rs_and(choice_mask)
+        gen_mask_c1 = gen_mask_c1.rs_and(choice_mask)
+        gen_mask_c2 = gen_mask_c2.rs_and(choice_mask)
     out = data.decode_masks(mask_c1, mask_c2, winsize, tbeg, tend, tstep, 
                             pseudo=True, time_zero_field=f1_tzf,
                             min_trials_pseudo=min_trials,
@@ -1207,7 +2139,7 @@ def generalization_analysis(data, tbeg, tend, dec_field, gen_field,
                             decode_tzf=f2_tzf, decode_m1=gen_mask_c1, 
                             decode_m2=gen_mask_c2, **kwargs)
     return out
-    
+
 def regression_gen(pops_tr, rts_tr, pops_te, rts_te, model=sklm.Ridge,
                    norm=True, pca=None):
     outs = np.zeros(len(pops_tr))

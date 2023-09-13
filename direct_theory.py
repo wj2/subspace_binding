@@ -2,10 +2,14 @@
 import numpy as np
 import sklearn.model_selection as skms
 import scipy.stats as sts
+import scipy.special as ss
+import itertools as it
 
 import general.utility as u
 import general.neural_analysis as na
 import composite_tangling.code_analysis as ca
+import scipy.optimize as sopt
+import rsatoolbox as rsa
 
 def _accumulate_time(pop, keepdim=True, ax=1):
     out = np.concatenate(list(pop[..., i] for i in range(pop.shape[-1])),
@@ -110,8 +114,84 @@ def _compute_bind(d_n, sigma, k=2, n=2, n_stim=2):
     n_swaps = ca.compute_feature_swaps_theory(k, n, n_stim)
     return n_swaps*sts.norm(0, 1).cdf(-np.sqrt(2)*d_n/(2*sigma))
 
+
+def rsa_preproc(a_pops, b_pops, norm=True, pre_pca=.99, trl_ax=1, feat_ax=0,
+                accumulate_time=True, ret_out_pops=False):
+    if accumulate_time:
+        a_pops = list(np.squeeze(_accumulate_time(tp, ax=0))
+                      for tp in a_pops)
+        b_pops = list(np.squeeze(_accumulate_time(tp, ax=0))
+                      for tp in b_pops)
+
+    out = _preprocess(*(a_pops + b_pops), norm=norm, pre_pca=pre_pca,
+                      trl_ax=trl_ax, sigma_est=None,
+                      sigma_transform=False)
+    out_pops, pipe, cent, sigma_est = out
+    if not ret_out_pops:
+        out = out_pops[:2], out_pops[2:]
+    else:
+        out = out_pops
+    return out
+
+
+def _rsa_theory(a_pops, b_pops, **kwargs):
+    a_pops_u, b_pops_u = rsa_preproc(a_pops, b_pops, **kwargs)
+    out = estimate_lin_nonlin_distance(a_pops_u, b_pops_u)
+    d_lins, d_nls, sigmas, sems = out
+
+    sem_nl = np.sqrt(2*d_nls**2 + sems**2)
+    pred_ccgp = _compute_ccgp(d_lins[0, 0], d_lins[0, 0], sem_nl,
+                              sigmas)
+    pred_bind = _compute_bind(np.sqrt(2)*d_nls, sigmas)
+    return pred_ccgp, pred_bind, (d_lins[:, 0], d_nls, sigmas, sems)
+
+
+def combined_ccgp_bind_est(train_pops, test_pops, use_rsa=True, schema=None, **kwargs):
+    n_pops = len(train_pops[0])
+    assert(use_rsa)
+    if schema is None:
+        schema = np.array([[0, 0],
+                           [1, 0],
+                           [0, 1],
+                           [1, 1]])
+
+    # make rdms
+    rdms_all = np.zeros((n_pops, len(schema), len(schema)))
+    sems = np.zeros(n_pops)
+    sigmas = np.zeros_like(sems)
+    sep_rdms = []
+    for i in range(n_pops):
+        tr_ps = list(tp[i] for tp in train_pops)
+        te_ps = list(tp[i] for tp in test_pops)
+        a_pops, b_pops = rsa_preproc(tr_ps, te_ps, **kwargs)
+        rdm_mat, sigmas_i, sems_i, rdms = estimate_distances(a_pops, b_pops)
+        sep_rdms.append(rdms)
+        rdms_all[i] = rdm_mat
+        sigmas[i] = sigmas_i
+        sems[i] = sems_i
+        
+    d_lins = np.zeros((n_pops, schema.shape[1]))
+    d_nls = np.zeros((n_pops, 1))
+    n_neurs = rdms[0].descriptors['noise'].shape[0]
+    print(np.mean(rdms_all*n_neurs, axis=0))
+    print(rdms_all[0])
+    rng = np.random.default_rng()
+    for i in range(n_pops):
+        n_neurs = sep_rdms[i][0].descriptors['noise'].shape[0]
+        inds = rng.choice(n_pops, n_pops)
+        d_lins[i], d_nls[i], _ = decompose_all_distance_matrices(
+            np.mean(rdms_all[i:i+1], axis=0, keepdims=True), schema, n_neurs
+        )
+
+    sem_nl = np.sqrt(2*d_nls**2 + sems**2)
+    pred_ccgp = _compute_ccgp(d_lins[0, 0], d_lins[0, 0], sem_nl,
+                              sigmas)
+    pred_bind = _compute_bind(np.sqrt(2)*d_nls, sigmas)
+    return pred_ccgp, pred_bind, (d_lins[:, 0], d_nls, sigmas, sems)
+
+
 def direct_ccgp_bind_est_pops(train_pops, test_pops, n_folds=5, test_prop=.1,
-                              **kwargs):
+                              use_rsa=True, **kwargs):
     n_pops = len(train_pops[0])
     bind_ests = np.zeros((n_pops, n_folds))
     gen_ests = np.zeros_like(bind_ests)
@@ -120,7 +200,9 @@ def direct_ccgp_bind_est_pops(train_pops, test_pops, n_folds=5, test_prop=.1,
     for i in range(n_pops):
         tr_ps = list(tp[i] for tp in train_pops)
         te_ps = list(tp[i] for tp in test_pops)
-        if test_prop == 0:
+        if use_rsa:
+            out = _rsa_theory(tr_ps, te_ps)
+        elif test_prop == 0:
             out = _mech_ccgp(tr_ps, te_ps, **kwargs)
         else:
             out = very_direct_ccgp(tr_ps, te_ps, n_folds=n_folds,
@@ -128,10 +210,13 @@ def direct_ccgp_bind_est_pops(train_pops, test_pops, n_folds=5, test_prop=.1,
         gen_ests[i], bind_ests[i], (d_l[i], d_n[i], sigma[i], sem[i]) = out
     return bind_ests, gen_ests, (d_l, d_n, sigma, sem)
 
+
 def _preprocess(*pops, fit=True, norm=True, pre_pca=.99, pipe=None,
-                sigma_est=None, trl_ax=1, cent=None):
+                sigma_est=None, trl_ax=1, cent=None, post_norm=False,
+                sigma_transform=True):
     if fit and pipe is None and (norm or pre_pca is not None):
-        pipe = na.make_model_pipeline(norm=norm, pca=pre_pca)
+        pipe = na.make_model_pipeline(norm=norm, pca=pre_pca,
+                                      post_norm=post_norm)
     if fit and pipe is not None:
         full_pop = np.concatenate(pops, axis=trl_ax)
         pipe.fit(full_pop.T)
@@ -146,7 +231,10 @@ def _preprocess(*pops, fit=True, norm=True, pre_pca=.99, pipe=None,
     sigma_est_comp = 1 
     if cent is None:
         cent = np.mean(preproc_pops[0], axis=trl_ax, keepdims=True)
-    out_pops = list((p_i - cent)/sigma_est_comp for p_i in preproc_pops)
+    if sigma_transform:
+        out_pops = list((p_i - cent)/sigma_est_comp for p_i in preproc_pops)
+    else:
+        out_pops = preproc_pops
     out = (out_pops, pipe, cent)
     if sigma_est is None:
         out = out + (sigma_est_comp,)
@@ -201,6 +289,184 @@ def _get_splitter_pops(splitters, pops, trl_ax=1, feat_ax=0):
         te_pops.append(pop_i[:, te_inds])
     return tr_pops, te_pops
 
+
+def estimate_distances(p1_group, p2_group, max_trials=None,
+                       n_resamps=50, **kwargs):
+    rng = np.random.default_rng()
+    t_nums = list(p_i.shape[-1] for p_i in p1_group + p2_group)
+    if max_trials is None:
+        max_trials = np.min(t_nums)
+
+    n_stim = len(p1_group) + len(p2_group)
+    rdm_mat = np.zeros((n_resamps, n_stim, n_stim))
+    sigmas = np.zeros(n_resamps)
+    sems = np.zeros(n_resamps)
+    p12_group = p1_group + p2_group
+    rdm_list = []
+
+    for j in range(n_resamps):
+        inds = list(
+            rng.choice(tn, max_trials, replace=False) for tn in t_nums
+        )
+        p_all_sep = list(
+            p_c[..., inds[i]] for i, p_c in enumerate(p12_group)
+        )
+
+        p_all = np.concatenate(p_all_sep, axis=1).T
+        p_mask = np.var(p_all, axis=0) > 0
+        p_all = p_all[:, p_mask]
+
+        stim = list(
+            (str(i),)*max_trials for i, p_ind in enumerate(p12_group)
+        )
+        stim = np.concatenate(stim)
+        data = rsa.data.Dataset(p_all, obs_descriptors={'stimulus': stim})
+
+        rdm = rsa.rdm.calc_rdm(data, descriptor='stimulus', noise=None,
+                               method='crossnobis')
+        f1, d_ll_n, inter = _get_pair_ax(*p_all_sep[:2])
+        sigmas[j] = np.sqrt(_est_noise(
+            *p_all_sep, proj_ax=f1, intercept=inter,
+        ))
+        sems[j] = _est_sem(*p_all_sep, sub_ax=f1)
+
+        rdm_mat[j] = rdm.get_matrices()[0]
+        rdm_list.append(rdm)
+    return rdm_mat, sigmas, sems, rdm_list
+
+
+def make_simple_distance_matrix(d_lins2, d_nl2, schema, shape):
+    new_mat = np.zeros(shape)
+    ind_pairs = it.combinations(range(shape[0]), 2)
+    for (i, j) in ind_pairs:
+        d_ij = (np.sum(((schema[i] - schema[j])**2)*d_lins2)
+                + 2*d_nl2*(i != j))
+        new_mat[i, j] = d_ij
+        new_mat[j, i] = d_ij
+    return new_mat
+
+
+def make_distance_matrix(d_lins2, d_nl2, schema, shape):
+    new_mat = np.zeros(shape)
+    ind_pairs = it.combinations(range(shape[0]), 2)
+    for (i, j) in ind_pairs:
+        d_ij = (np.sum(((schema[i] - schema[j])**2)*d_lins2)
+                + (d_nl2[i] + d_nl2[j])*(i != j))
+        new_mat[i, j] = d_ij
+        new_mat[j, i] = d_ij
+    return new_mat
+
+
+def decompose_all_distance_matrices(mat, schema, n_neurs):
+    mat = mat*n_neurs
+    mult = .1 # np.max(mat) 
+    dists_init = np.abs(mult*sts.norm(0, 1).rvs(schema.shape[1]
+                                                + schema.shape[0]))
+    dists_init = np.abs(mult*sts.norm(0, 1).rvs(schema.shape[1] + 1))
+
+    def _mat_recon_func(dists):
+        d_lins = dists[:schema.shape[1]]
+        d_nl = dists[schema.shape[1]:]
+        new_mat = make_simple_distance_matrix(d_lins, d_nl, schema, mat.shape[1:])
+        # new_mat = make_distance_matrix(d_lins, d_nl, schema, mat.shape[1:])
+        diff = np.sum(np.mean((np.expand_dims(new_mat, 0) - mat)**2, axis=0))
+        return diff
+
+    res = sopt.minimize(_mat_recon_func, dists_init,
+                        bounds=((0, None),)*len(dists_init))
+    x = np.sqrt(res.x)
+    d_lins = x[:schema.shape[1]]
+    d_nl = x[schema.shape[1]:]
+
+    d_nl = np.median(d_nl)
+    return d_lins, d_nl, res
+
+
+def decompose_distance_matrix_nnls(mat, schema, n_neurs, indiv_dists=False):
+    mat = mat*n_neurs
+    mat[mat < 0] = 0
+
+    design = []
+    targ = []
+    for i, j in it.combinations(range(len(schema)), 2):
+        if indiv_dists:
+            add_d = np.zeros(len(schema))
+            add_d[i] = 1
+            add_d[j] = 1
+        else:
+            add_d = (2,)
+        design_ij = np.concatenate((np.abs(schema[i] - schema[j]), add_d))
+        design.append(design_ij)
+        targ.append(mat[i, j])
+    out = sopt.nnls(np.array(design), np.array(targ))
+    # out = np.linalg.lstsq(np.array(design), np.array(targ), rcond=None)
+    x = out[0]
+
+    d_lins = x[:schema.shape[1]]
+    d_nl = x[schema.shape[1]:]
+
+    d_nl = np.mean(d_nl)
+    return d_lins, d_nl, None
+
+
+def decompose_distance_matrix(mat, schema, n_neurs):
+    mult = 10  # np.max(mat)
+    dists_init = np.abs(mult*sts.norm(0, 1).rvs(schema.shape[1]
+                                                + schema.shape[0]))
+    dists_init = np.abs(mult*sts.norm(0, 1).rvs(schema.shape[1] + 1))
+    mat = mat*n_neurs
+
+    def _mat_recon_func(dists):
+        d_lins = dists[:schema.shape[1]]
+        d_nl = dists[schema.shape[1]:]
+        new_mat = make_simple_distance_matrix(d_lins, d_nl, schema, mat.shape)
+        # new_mat = make_distance_matrix(d_lins, d_nl, schema, mat.shape)
+        diff = np.sum((new_mat - mat)**2)
+        return diff
+
+    res = sopt.minimize(_mat_recon_func, dists_init,
+                        bounds=((0, None),)*len(dists_init))
+    x = res.x
+
+    x = np.sqrt(x)
+    d_lins = x[:schema.shape[1]]
+    d_nl = x[schema.shape[1]:]
+
+    d_nl = np.mean(d_nl)
+    return d_lins, d_nl, res
+
+
+def estimate_lin_nonlin_distance(p1_group, p2_group, schema=None,
+                                 rdm_mat=None, indiv_dists=False,
+                                 **kwargs):
+    if schema is None:
+        schema = np.array([[0, 0],
+                           [1, 0],
+                           [0, 1],
+                           [1, 1]])
+    if rdm_mat is None:
+        rdm_mat, sigmas, sems, rdms = estimate_distances(p1_group, p2_group,
+                                                         **kwargs)
+    d_lins = np.zeros((rdm_mat.shape[0], schema.shape[1]))
+    d_nls = np.zeros((rdm_mat.shape[0], 1))
+    for i, rdm_i in enumerate(rdm_mat):
+        n_neurs = rdms[i].descriptors['noise'].shape[0]
+        d_lins[i], d_nls[i], _ = decompose_distance_matrix_nnls(
+            rdm_i, schema, n_neurs, indiv_dists=indiv_dists,
+        )
+    d_lins = np.median(d_lins, axis=0, keepdims=True)
+    d_nls = np.median(d_nls, axis=0, keepdims=True)
+    sigmas = np.mean(sigmas, keepdims=True)
+    sems = np.mean(sems, keepdims=True)
+    d_lins[d_lins < 0] = 0
+    d_nls[d_nls < 0] = 0
+    d_lins = np.sqrt(d_lins)
+    d_nls = np.sqrt(d_nls)
+    # print(d_lins, d_nls, sigmas, sems)
+
+    return d_lins, d_nls, sigmas, sems
+
+
 def _mech_ccgp(a_pops, b_pops, norm=True, pre_pca=.99, trl_ax=1, feat_ax=0,
                accumulate_time=True, empirical=False):
     if accumulate_time:
@@ -213,10 +479,10 @@ def _mech_ccgp(a_pops, b_pops, norm=True, pre_pca=.99, trl_ax=1, feat_ax=0,
     out_pops, pipe, cent, sigma_est = out
     a_tr_i, b_tr_i = out_pops[:2], out_pops[2:]
     a_te_i, b_te_i = out_pops[:2], out_pops[2:]
-    
+
     f1, d_ll_n, inter = _get_pair_ax(*a_tr_i)
     f1_g, d_lg_n, _ = _get_pair_ax(*b_tr_i)
-    
+
     p_ll = np.dot(f1.T, d_lg_n*f1_g)
     d_prod = p_ll*d_ll_n
     if d_prod < 0:
@@ -317,7 +583,7 @@ def very_direct_ccgp(a_pops, b_pops, accumulate_time=True, norm=True, pre_pca=.9
 
         f1_te, d_ll_te_n, inter_te = _get_pair_ax(*a_te_i)
         f1_g_te, d_lg_te_n, _ = _get_pair_ax(*b_te_i)
-        
+
         f1_common, _, _, i_common = _get_shared_ax((a_tr_i[0], b_tr_i[0]),
                                                    (a_tr_i[1], b_tr_i[1]))
 

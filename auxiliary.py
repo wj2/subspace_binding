@@ -29,22 +29,56 @@ def save_model_fits(fit_dict, output_folder):
     pickle.dump(fit_dict, open(d_path, 'wb'))
     return fit_dict
 
-def load_model_fits(folder):
+def load_model_fits(folder, load_if_region=None):
     fd_path = os.path.join(folder, 'fit_dict.pkl')
     fd = pickle.load(open(fd_path, 'rb'))
     for key, item in fd.items():
         for i, fit_path in enumerate(item[1]):
-            _, fit_name = os.path.split(fit_path)
-            fit_targ = os.path.join(folder, fit_name)
-            fit = az.from_netcdf(fit_targ)
-            item[1][i] = fit
+            if ((load_if_region is not None and key[0][i] == load_if_region)
+                or load_if_region is None):
+                _, fit_name = os.path.split(fit_path)
+                fit_targ = os.path.join(folder, fit_name)
+                fit = az.from_netcdf(fit_targ)
+                item[1][i] = fit
     return fd
 
-all_types = ('null', 'null_spline', 'interaction', 'interaction_spline')
-all_nums = range(50 + 1)
-def load_many_fits(folder, types=all_types, nums=all_nums,
-                   template='fit_{type}_{num}'):
+
+all_types = ('noise', 'null', 'null_spline', 'interaction',
+             'interaction_spline')
+all_nums = range(289 + 1)
+# all_nums = range(50 + 1)
+def load_region_type_fits(folder, type_, region,
+                          template='fit_{type}_{num}',
+                          nums=all_nums):
     out_dict = {}
+    out_data = {}
+    for num in nums:
+        n_dict = {}
+        path = os.path.join(folder, template.format(num=num, type=type_))
+        out_nt = load_model_fits(path, load_if_region=region)
+        for k, sess in out_nt.items():
+            (regions, animal, info) = k            
+            for i in range(len(sess[1])):
+                if regions[i] == region:
+                    out_dict[(regions[i], animal, info, i)] = out_nt[k][1][i]
+                    out_data[(regions[i], animal, info, i)] = sess[0]
+    return out_dict, out_data
+
+def make_fit_matrix(fit_dict, coeff_key='beta', intercept_key='alpha'):
+    rows = []
+    first_eg = list(fit_dict.values())[0].posterior[coeff_key]
+    n_samps, dim = np.concatenate(first_eg, axis=0).shape
+    out_mat = np.zeros((n_samps, len(fit_dict), dim))
+    out_inter = np.zeros((n_samps, len(fit_dict), 1))
+    for i, (k, v) in enumerate(fit_dict.items()):
+        out_mat[:, i] = np.concatenate(v.posterior[coeff_key], axis=0)
+        out_inter[:, i, 0] = np.concatenate(v.posterior[intercept_key], axis=0)
+    return out_mat, out_inter    
+
+def load_many_fits(folder, types=all_types, nums=all_nums,
+                   template='fit_{type}_{num}', thr=0):
+    az_dict = {}
+    comp_dict = {}
     for num in nums:
         n_dict = {}
         for type_ in types:
@@ -55,8 +89,11 @@ def load_many_fits(folder, types=all_types, nums=all_nums,
             (regions, animal, info) = k 
             for i in range(len(sess[1])):
                 neur_type_dict = {t:n_dict[t][k][1][i] for t in types}
-                out_dict[(regions[i], animal, info, i)] = neur_type_dict
-    return out_dict
+                x = az.compare(neur_type_dict)
+                best_model = x.index[0]
+                comp_dict[(regions[i], animal, info, i)] = x
+                az_dict[(regions[i], animal, info, i)] = neur_type_dict
+    return az_dict, comp_dict
 
 def resave_mats(folder, mat_templ='.*\.mat'):
     fls = os.listdir(folder)
