@@ -3,26 +3,19 @@ import re
 import numpy as np
 import pandas as pd
 import scipy.io as sio
-import scipy.stats as sts
-import functools as ft
-import pickle
 import sklearn.linear_model as sklm
-import sklearn.model_selection as skms
 import sklearn.preprocessing as skp
 import matplotlib.pyplot as plt
 
 import general.plotting as gpl
-import general.plotting_styles as gps
 import general.paper_utilities as pu
 import general.data_io as gio
 import general.utility as u
-import general.neural_analysis as na
 import multiple_representations.analysis as mra
 import multiple_representations.auxiliary as mraux
 import multiple_representations.theory as mrt
 import multiple_representations.visualization as mrv
 import multiple_representations.direct_theory as mrdt
-import composite_tangling.code_creation as cc
 
 config_path = "multiple_representations/figures.conf"
 
@@ -43,9 +36,10 @@ colors = (
 
 class MultipleRepFigure(pu.Figure):
 
-    def get_experimental_data(self, force_reload=False):
+    def get_experimental_data(self, force_reload=False, data_folder=None):
         if self.data.get("experimental_data") is None or force_reload:
-            data_folder = self.params.get("data_folder")
+            if data_folder is None:
+                data_folder = self.params.get("data_folder")
             data = gio.Dataset.from_readfunc(mraux.load_fine_data, data_folder)
 
             exclude_list = self.params.getlist("exclude_datasets")
@@ -222,14 +216,17 @@ class SelectivityFigure(MultipleRepFigure):
         axs[0, 0].set_ylabel("spikes/s")
         axs[0, 1].set_ylabel("spikes/s")
 
-    def panel_model_comp(self):
-        key = "model_comp"
-        axs = self.gss[key]
+    def _get_model_comp_data(self, key="model_comp"):
         if self.data.get(key) is None:
             fit_folder = self.params.get("fit_folder")
             _, comp_dict = mraux.load_many_fits(fit_folder)
             self.data[key] = comp_dict
-        comp_dict = self.data[key]
+        return self.data[key]
+        
+    def panel_model_comp(self):
+        key = "model_comp"
+        axs = self.gss[key]
+        comp_dict = self._get_model_comp_data()
         ax_labels = ("noise", "linear", "interaction")
         use_regions = self.regions[:-1]
 
@@ -257,7 +254,8 @@ class SelectivityFigure(MultipleRepFigure):
                 ms=3,
             )
 
-    def panel_subspace_corr(self):
+
+    def panel_subspace_corr(self, recompute=False):
         key = "subspace_corr"
         axs = self.gss[key]
         data = self.get_exper_data()
@@ -269,59 +267,256 @@ class SelectivityFigure(MultipleRepFigure):
         use_nl_val = self.params.getboolean("use_nl_value")
         if use_nl_val:
             align_func = mra.compute_alignment_index
-            pred_func = mrv.interaction_spline_pred
+            pred_func = mra.interaction_spline_pred
         else:
             align_func = mra.compute_corr
-            pred_func = mrv.interaction_pred
+            pred_func = mra.interaction_pred
 
-        if self.data.get(key) is None:
-            out_sessions = mra.make_predictor_matrices(
-                data,
-                t_beg=tb_on,
-                t_end=te_on,
-                transform_value=use_nl_val,
-            )
-            boots_on = mra.fit_bootstrap_models(out_sessions)
+        groups = {
+            "full": {"t1_only": False, "t2_only": False, "decrement": 2},
+            "offer 1": {"t1_only": True, "t2_only": False},
+            "offer 2": {"t1_only": False, "t2_only": True},
+        }
+        if self.data.get(key) is None or recompute:
+            out_dict = {}
+            for k, kw in groups.items():
+                out_sessions = mra.make_predictor_matrices(
+                    data,
+                    t_beg=tb_on,
+                    t_end=te_on,
+                    transform_value=use_nl_val,
+                    **kw,
+                )
+                boots_on = mra.fit_bootstrap_models(out_sessions)
+                ms_on_dict[ms_k] = boots_on
 
-            out_sessions = mra.make_predictor_matrices(
-                data,
-                t_beg=tb_delay,
-                t_end=te_delay,
-                transform_value=use_nl_val,
-            )
-            boots_delay = mra.fit_bootstrap_models(out_sessions)
-            self.data[key] = (boots_on, boots_delay)
+                out_sessions = mra.make_predictor_matrices(
+                    data,
+                    t_beg=tb_delay,
+                    t_end=te_delay,
+                    transform_value=use_nl_val,
+                    **kw,
+                )
+                boots_delay = mra.fit_bootstrap_models(out_sessions)
+                ms_delay_dict[ms_k] = boots_delay
+                
+                r_on_dict = {}
+                r_delay_dict = {}
+                for i, r in enumerate(self.regions):
+                    if r == "all":
+                        r_list = None
+                    else:
+                        r_list = (r,)
+                    out_on = mra.compute_split_halfs(
+                        boots_on, pred_func, use_regions=r_list
+                    )
+                    r_on_dict[r] = out_on
+                    out_delay = mra.compute_split_halfs_model_mix(
+                        boots_delay, pred_func, use_regions=r_list
+                    )
+                    r_delay_dict[r] = out_delay
+                out_dict[k] = (r_on_dict, r_delay_dict)
+            self.data[key] = out_dict
 
-        boots_on, boots_delay = self.data[key]
+        model_dict = self.data[key]
         null_color = self.params.getcolor("null_corr_color")
-        for i, r in enumerate(self.regions):
-            r_color = self.get_color_dict()[r]
-            if r == "all":
-                r_list = None
-            else:
-                r_list = (r,)
-            mrv.plot_split_halfs(
-                boots_on,
-                pred_func,
-                use_regions=r_list,
-                ax=axs[0],
-                wi_pt=i,
-                ac_pt=i,
-                wi_color=r_color,
-                ac_color=null_color,
-                align_func=align_func,
-            )
-            mrv.plot_split_halfs(
-                boots_delay,
-                pred_func,
-                use_regions=r_list,
-                ax=axs[1],
-                wi_pt=i,
-                ac_pt=i,
-                wi_color=r_color,
-                ac_color=null_color,
-                align_func=align_func,
-            )
+        style_kw = {
+            "offer 1": {"markerstyles": "o"},
+            "offer 2": {"markerstyles": "s"},
+            # "full": {"markerstyles": "s"},
+        }
+        offsets = {
+            "offer 1": -.2,
+            "offer 2": 0,
+            "full": .2
+        }
+        for k, (boots_on, boots_delay) in model_dict.items():
+            for i, r in enumerate(self.regions):
+                r_color = self.get_color_dict()[r]
+                if r == "all":
+                    r_list = None
+                else:
+                    r_list = (r,)
+                mrv.plot_split_halfs(
+                    boots_on,
+                    pred_func,
+                    use_regions=r_list,
+                    ax=axs[0],
+                    wi_pt=i + offsets[k],
+                    ac_pt=i + offsets[k],
+                    wi_color=r_color,
+                    ac_color=null_color,
+                    align_func=align_func,
+                    **style_kw.get(k, {}),
+                )
+                mrv.plot_split_halfs(
+                    boots_delay,
+                    pred_func,
+                    use_regions=r_list,
+                    ax=axs[1],
+                    wi_pt=i + offsets[k],
+                    ac_pt=i + offsets[k],
+                    wi_color=r_color,
+                    ac_color=null_color,
+                    align_func=align_func,
+                    **style_kw.get(k, {}),
+                )
+        gpl.clean_plot(axs[0], 0)
+        gpl.clean_plot_bottom(axs[0])
+        gpl.clean_plot(axs[1], 0)
+        gpl.add_hlines(0, axs[0])
+        gpl.add_hlines(0, axs[1])
+        axs[1].spines["bottom"].set_visible(False)
+        axs[1].set_xticks(np.arange(len(self.regions)))
+        axs[1].set_xticklabels(self.regions)
+
+        if use_nl_val:
+            y_label = "alignment index"
+        else:
+            y_label = "subspace correlation"
+        axs[0].set_ylabel(y_label)
+        axs[1].set_ylabel(y_label)
+
+            
+    def panel_subspace_corr_model_mix(self, recompute=False):
+        key = "subspace_corr"
+        axs = self.gss[key]
+        data = self.get_exper_data()
+        tb_on = self.params.getint("tbeg_on")
+        te_on = self.params.getint("tend_on")
+        tb_delay = self.params.getint("tbeg_delay")
+        te_delay = self.params.getint("tend_delay")
+
+
+        comp_dict = self._get_model_comp_data()
+
+        use_nl_val = self.params.getboolean("use_nl_value")
+        if use_nl_val:
+            align_func = mra.compute_alignment_index
+            pred_dict = {
+                "linear": mra.null_spline_pred,
+                "interaction": mra.interaction_spline_pred,
+            }
+        else:
+            align_func = mra.compute_corr
+            pred_dict = {
+                "linear": mra.null_pred,
+                "interaction": mra.interaction_pred,
+            }
+
+        groups = {
+            "full": {"t1_only": False, "t2_only": False, "decrement": 2},
+            "offer 1": {"t1_only": True, "t2_only": False},
+            "offer 2": {"t1_only": False, "t2_only": True},
+        }
+        model_specs = {
+                "linear": {"include_interaction": False},
+                "interaction": {"include_interaction": True},
+        }
+        n_value_bins = self.params.getint("n_value_bins")
+        n_value_trials = self.params.getint("n_value_trials")
+        if self.data.get(key) is None or recompute:
+            out_dict = {}
+            for k, kw in groups.items():
+                ms_on_dict = {}
+                ms_delay_dict = {}
+                session_on_dict = {}
+                session_delay_dict = {}
+                for ms_k, ms in model_specs.items():
+                    out_on_sessions = mra.make_predictor_matrices(
+                        data,
+                        t_beg=tb_on,
+                        t_end=te_on,
+                        transform_value=use_nl_val,
+                        return_core_predictors=True,
+                        norm_value=False,
+                        discretize_value=True,
+                        **kw,
+                        **ms,
+                    )
+                    boots_on = mra.fit_bootstrap_models(out_on_sessions)
+                    ms_on_dict[ms_k] = boots_on
+
+                    out_delay_sessions = mra.make_predictor_matrices(
+                        data,
+                        t_beg=tb_delay,
+                        t_end=te_delay,
+                        transform_value=use_nl_val,
+                        return_core_predictors=True,
+                        norm_value=False,
+                        discretize_value=True,
+                        **kw,
+                        **ms,
+                    )
+                    boots_delay = mra.fit_bootstrap_models(out_delay_sessions)
+                    ms_delay_dict[ms_k] = boots_delay
+                r_on_dict = {}
+                r_delay_dict = {}
+                for i, r in enumerate(self.regions):
+                    if r == "all":
+                        r_list = None
+                    else:
+                        r_list = (r,)
+                    out_on = mra.compute_split_halfs_model_mix(
+                        ms_on_dict,
+                        comp_dict,
+                        pred_dict,
+                        use_regions=r_list,
+                        full_data=out_on_sessions,
+                        n_full_data_trials=n_value_trials,
+                    )
+                    r_on_dict[r] = out_on
+                    out_delay = mra.compute_split_halfs_model_mix(
+                        ms_delay_dict,
+                        comp_dict,
+                        pred_dict,
+                        use_regions=r_list,
+                        full_data=out_delay_sessions,
+                        n_full_data_trials=n_value_trials,
+                    )
+                    r_delay_dict[r] = out_delay
+                out_dict[k] = (r_on_dict, r_delay_dict)
+            self.data[key] = out_dict
+
+        model_dict = self.data[key]
+        null_color = self.params.getcolor("null_corr_color")
+        style_kw = {
+            "offer 1": {"markerstyles": "o"},
+            "offer 2": {"markerstyles": "s"},
+            # "full": {"markerstyles": "s"},
+        }
+        offsets = {
+            "offer 1": -.2,
+            "offer 2": 0,
+            "full": .2
+        }
+        for k, (r_on, r_delay) in model_dict.items():
+            for i, r in enumerate(self.regions):
+                r_color = self.get_color_dict()[r]
+                if r == "all":
+                    r_list = None
+                else:
+                    r_list = (r,)
+                rs_wi_on, rs_ac_on, rs_null_on = r_on[r]
+                mrv.plot_split_halfs_only(
+                    rs_wi_on,
+                    rs_ac_on,
+                    rs_null_on,
+                    ax=axs[0],
+                    pt=i + offsets[k],
+                    colors=(r_color, null_color, "k"),
+                    **style_kw.get(k, {}),
+                )
+                rs_wi_delay, rs_ac_delay, rs_null_delay = r_delay[r]
+                mrv.plot_split_halfs_only(
+                    rs_wi_delay,
+                    rs_ac_delay,
+                    rs_null_delay,
+                    ax=axs[1],
+                    pt=i + offsets[k],
+                    colors=(r_color, null_color, "k"),
+                    **style_kw.get(k, {}),
+                )
         gpl.clean_plot(axs[0], 0)
         gpl.clean_plot_bottom(axs[0])
         gpl.clean_plot(axs[1], 0)
@@ -363,6 +558,7 @@ class DecodingFigure(MultipleRepFigure):
         time_acc = self.params.getboolean("time_accumulate")
         regions = self.params.getlist("use_regions")
         correct_only = self.params.getboolean("correct_only")
+        subsample_neurons = self.params.getint("subsample_neurons")
 
         exper_data = self.get_experimental_data(force_reload=force_reload)
 
@@ -372,6 +568,9 @@ class DecodingFigure(MultipleRepFigure):
                 use_regions = None
             else:
                 use_regions = (region,)
+            print(kwargs)
+            print(use_regions, subsample_neurons, correct_only)
+            print(var)
             out_r = func(
                 exper_data,
                 tbeg,
@@ -384,6 +583,7 @@ class DecodingFigure(MultipleRepFigure):
                 time_accumulate=time_acc,
                 regions=use_regions,
                 correct_only=correct_only,
+                subsample_neurons=subsample_neurons,
                 **kwargs
             )
             decoding_results[region] = out_r
@@ -454,7 +654,7 @@ class DecodingFigure(MultipleRepFigure):
                 lm = term_dict["lm"]
                 nlm = term_dict["nlm"]
                 nv = term_dict["nv"]
-                r2 = term_dict["r2"]
+                # r2 = term_dict["r2"]
                 pred_out = mra.compute_ccgp_bin_prediction(
                     lm,
                     nlm,
@@ -468,9 +668,11 @@ class DecodingFigure(MultipleRepFigure):
                 predictions[region][contrast] = ret_dict
         return predictions
 
-    def _direct_predictions(self, dec_key):
-        decs = self.data.get(dec_key)
-        use_regions = self.params.getlist("use_regions")
+    def _direct_predictions(self, dec_key, decs=None, use_regions=None):
+        if decs is None:
+            decs = self.data.get(dec_key)
+        if use_regions is None:
+            use_regions = self.params.getlist("use_regions")
         model_dict = {}
         for region, dec_results in decs.items():
             if region in use_regions:
@@ -488,6 +690,7 @@ class DecodingFigure(MultipleRepFigure):
                             "d_n": out[2][1],
                             "sigma": out[2][2],
                             "sem": out[2][3],
+                            "n_neurs": out[2][4],
                         }
                     else:
                         out_dict = None
@@ -580,7 +783,7 @@ class DecodingFigure(MultipleRepFigure):
     def prob_generalization(self, force_reload=False, force_recompute=False):
         key = "prob_generalization"
         dead_perc = self.params.getfloat("exclude_middle_percentiles")
-        mask_func = lambda x: x < 1
+        def mask_func(x): return x < 1
         min_trials = self.params.getint("min_trials_prob")
         if self.data.get(key) is None or force_recompute:
             out = self._decoding_analysis(
@@ -618,7 +821,7 @@ class DecodingFigure(MultipleRepFigure):
         key = "ev_generalization"
         dead_perc = self.params.getfloat("exclude_middle_percentiles")
         min_trials = self.params.getint("min_trials_ev")
-        mask_func = lambda x: x < 1
+        def mask_func(x): return x < 1
         mask_var = "prob"
         use_split_dec = None
         dec_less = self.params.getboolean("dec_less")
@@ -804,7 +1007,7 @@ class SIDecodingFigure(MultipleRepFigure):
     def make_gss(self):
         gss = {}
         use_contrasts = self.params.getlist("use_contrasts")
-        n_conds = len(use_contrasts)
+        # n_conds = len(use_contrasts)
 
         gs_contrasts = pu.make_mxn_gridspec(self.gs, 2, 1, 0, 100, 0, 100, 5, 5)
         axs_contrasts = self.get_axs(
@@ -1199,12 +1402,12 @@ class CombinedRepFigure(MultipleRepFigure):
         if self.data.get("panel_dists") is None:
             self.panel_dists()
         out_rdm_dict = self.data.get("panel_dists")
-        corr = ((corr[0],), (corr[1], corr[2]))
+        corr = ((corr[0],), (corr[1],), (corr[2],))
         pairs = (("same order, side-values flip",
                   "order flips, side-values flip",
                   "order flips, side-values same",),
-                 ("low",
-                  "high",))
+                 ("low",),
+                 ("high",),)
         for i, pair in enumerate(pairs):
             comb_dists = np.mean(
                 list(out_rdm_dict["all"][2][p] for p in pair),
@@ -1217,6 +1420,65 @@ class CombinedRepFigure(MultipleRepFigure):
         ax_rel.set_xlim([.65, 1])
         ax_rel.set_xlabel('correct response\nrate')
         ax_rel.set_ylabel('estimated distance')
+
+    def additional_dec_bhv_sweep(self, force_reload=False, recompute=False):
+        key = "additional_dec_bhv_sweep"
+        f, axs = plt.subplots(1, 2)
+        if self.data.get(key) is None or recompute:
+            min_trials = self.params.getint("min_trials_bhv")
+            tbeg = self.params.getint("tbeg")
+            tend = self.params.getint("tend")
+            dead_perc = self.params.getfloat("dead_perc_bhv")
+            pre_pca = self.params.getfloat("pca_pre")
+            n_folds = self.params.getint("n_folds_bhv")
+            test_prop = self.params.getfloat("test_frac_bhv")
+
+            min_neurs_range = np.arange(2, 20, 4)
+            data = self.get_experimental_data(force_reload=force_reload)
+            out_dict = {}
+            for i, mn in enumerate(min_neurs_range):
+                session_mask = data['n_neurs'] > mn
+                data_filt = data.session_mask(session_mask)
+
+                out_decbhv = mra.estimate_bhv_corr(
+                    data_filt,
+                    tbeg,
+                    tend,
+                    min_trials=min_trials,
+                    dead_perc=dead_perc,
+                    time_accumulate=True,
+                    pre_pca=pre_pca,
+                    n_folds=n_folds,
+                    test_prop=test_prop,
+                    ret_projections=True,
+                    use_time=True,
+                )
+                regions = list(x[0][0] for x in data_filt['neur_regions'])
+                out_dict[mn] = (regions, out_decbhv)
+            self.data[key] = out_dict
+
+        ks = (
+            'left-higher vs right-higher -- no order',
+            'first-higher vs second-higher -- no side',
+        )
+        out_dict = self.data[key]
+        regions_all = np.unique(
+            np.concatenate(list(v[0] for v in out_dict.values()))
+        )
+        
+        minors = np.linspace(-.2, .2, len(out_dict))
+        for j, (mn, (rs, out_decbhv)) in enumerate(out_dict.items()):
+            for i, k in enumerate(ks):
+                dec_i, _, _, _, _, _, gen_i = out_decbhv[k]
+                mrv.plot_bhv_dec_hist(
+                    dec_i,
+                    gen_i,
+                    rs,
+                    ax=axs[i],
+                    u_rs=regions_all,
+                    minor=minors[j],
+                )
+
 
     def panel_dec_bhv(self, force_reload=False, recompute=False):
         key = "panel_dec_bhv"
@@ -1247,16 +1509,19 @@ class CombinedRepFigure(MultipleRepFigure):
                 n_folds=n_folds,
                 test_prop=test_prop,
                 ret_projections=True,
+                use_time=True,
             )
             self.data[key] = data_filt, out_decbhv
         data_filt, out_decbhv = self.data[key]
 
         k1 = 'left-higher vs right-higher -- no order'
         k2 = 'first-higher vs second-higher -- no side'
-
+        
         dec, xs, d1, d2, g1, g2, gen = out_decbhv[k1]
         color_dict = self.get_color_dict()
         regions = list(x[0][0] for x in data_filt['neur_regions'])
+        
+        mra.print_factorial_analysis(regions, out_decbhv[k1], out_decbhv[k2])
 
         mrv.plot_bhv_dec(
             dec,
@@ -1303,10 +1568,10 @@ class CombinedRepFigure(MultipleRepFigure):
         use_nl_val = self.params.getboolean("use_nl_value")
         if use_nl_val:
             align_func = mra.compute_alignment_index
-            pred_func = mrv.interaction_spline_pred
+            pred_func = mra.interaction_spline_pred
         else:
             align_func = mra.compute_corr
-            pred_func = mrv.interaction_pred
+            pred_func = mra.interaction_pred
 
         if self.data.get(key) is None or recompute:
             out_sessions = mra.make_predictor_matrices(
@@ -1422,19 +1687,19 @@ class GeneralTheoryFigure(MultipleRepFigure):
             err_theor, err_emp, swap_theor, gen_theor, gen_emp = plot_pwrs
 
             color = cmap(trade)
-            l = gpl.plot_trace_werr(
+            l_ = gpl.plot_trace_werr(
                 pwrs_root, 1 - err_emp.T, ax=axs[0], conf95=True, log_y=True,
                 label='r = {:.1f}'.format(trade), color=color,
             )
-            gpl.plot_trace_werr(pwrs_root, err_theor, ax=axs[0], color=l[0].get_color(),
+            gpl.plot_trace_werr(pwrs_root, err_theor, ax=axs[0], color=l_[0].get_color(),
                                 plot_outline=True, linestyle='dashed')
             gpl.plot_trace_werr(pwrs_root, swap_theor, ax=axs[1],
                                 plot_outline=True, linestyle='dashed',
                                 color=color,)
 
-            l = gpl.plot_trace_werr(pwrs_root, 1 - gen_emp.T, ax=axs[2], conf95=True,
+            l_ = gpl.plot_trace_werr(pwrs_root, 1 - gen_emp.T, ax=axs[2], conf95=True,
                                     color=color)
-            gpl.plot_trace_werr(pwrs_root, gen_theor, ax=axs[2], color=l[0].get_color(),
+            gpl.plot_trace_werr(pwrs_root, gen_theor, ax=axs[2], color=l_[0].get_color(),
                                 plot_outline=True, linestyle='dashed')
         axs[0].set_ylabel('error rate')
         axs[1].set_ylabel('misbinding\nerror rate')
@@ -1554,11 +1819,11 @@ class GeneralTheoryFigure(MultipleRepFigure):
 
             dl_ests = np.squeeze(dist_ests['dl'][1][i])
             dl_trues = dist_ests['dl'][0][i]
-            l = gpl.plot_trace_werr(tradeoffs, dl_trues.T, ax=ax_dl,
+            l_ = gpl.plot_trace_werr(tradeoffs, dl_trues.T, ax=ax_dl,
                                     linestyle='dashed',
                                     plot_outline=True,
                                     color=colors[i])
-            col = l[0].get_color()
+            col = l_[0].get_color()
             gpl.plot_trace_werr(tradeoffs, dl_ests.T, ax=ax_dl,
                                 color=col, central_tendency=np.nanmedian,
                                 conf95=True)
@@ -1723,8 +1988,14 @@ class TheoryFigure(MultipleRepFigure):
         folder = self.params.get("decoding_folder")
         pred_path = self.params.get("pred_file")
 
+        normalize_dimensions = self.params.getboolean("normalize_dimensions")
+        n_virtual_dims = self.params.getint("n_virtual_dims")
+
+        if normalize_dimensions:
+            preds = mra.normalize_pred_dimensions(preds, n_virtual_dims)
+
         mrv.plot_distances(
-            os.path.join(folder, pred_path),
+            preds,
             axs=np.squeeze(axs_dists),
             other_key="non other",
             region_order=regions,
@@ -1738,6 +2009,7 @@ class TheoryFigure(MultipleRepFigure):
         cnames = self.params.getlist("contrast_names")
         if cnames is None:
             cnames = contrasts
+        comp_region = "all"
         for i, region in enumerate(regions):
             for j, contrast in enumerate(contrasts):
                 pred_ij = preds[region][contrast]

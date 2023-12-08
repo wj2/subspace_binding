@@ -16,20 +16,6 @@ import multiple_representations.analysis as mra
 import multiple_representations.auxiliary as mraux
 import multiple_representations.theory as mrt
 
-null_pred = ft.partial(mra.form_predictors,
-                       norm_value=False,
-                       include_interaction=False)
-interaction_pred = ft.partial(mra.form_predictors,
-                              norm_value=False)
-
-null_spline_pred = ft.partial(mra.form_predictors,
-                              norm_value=False,
-                              include_interaction=False,
-                              transform_value=True)
-interaction_spline_pred = ft.partial(mra.form_predictors,
-                                     norm_value=False,
-                                     transform_value=True)
-
 
 def _get_stim_reps(mat, inter, pred_func, val_ext=(-1.5, 1.5), n_pts=100,
                    link_function=None, zero_preds=None):
@@ -120,10 +106,40 @@ def plot_split_halfs_full(fit_dict, pred_func, ax=None, use_regions=None,
                    ax=ax, showextrema=False, showmedians=True)
 
 
+def plot_split_halfs_only(
+        *rs,
+        ax=None,
+        pts=None,
+        pt=0,
+        colors=None,
+        markerstyles=None,
+        **kwargs,
+):
+    if ax is None:
+        f, ax = plt.subplots(1, 1)
+    if pts is None:
+        pts = (pt,)*len(rs)
+    if colors is None:
+        colors = (None,)*len(rs)
+    for i, r in enumerate(rs):
+        gpl.violinplot(
+            np.expand_dims(r, 0),
+            [pts[i]],
+            color=[colors[i]],
+            ax=ax,
+            showextrema=False,
+            showmedians=True,
+            markerstyles=markerstyles,
+            **kwargs,
+        )
+    return ax
+
+
 def plot_split_halfs(fit_dict, pred_func, ax=None, use_regions=None,
                      pearson_brown=False, align_func=mra.compute_corr,
                      n_pts=100, ac_pt=0, wi_pt=1, wi_color=None,
-                     ac_color=None, zp1=None, zp2=None, **kwargs):
+                     ac_color=None, zp1=None, zp2=None, markerstyles=None,
+                     **kwargs):
     if use_regions is None:
         use_regions = ('OFC', 'PCC', 'pgACC', 'VS', 'vmPFC')
     mat1 = np.concatenate(list(v[0][0] for (r, _, _), v in fit_dict.items()
@@ -138,6 +154,12 @@ def plot_split_halfs(fit_dict, pred_func, ax=None, use_regions=None,
     inter2 = np.concatenate(list(v[1][1] for (r, _, _), v in fit_dict.items()
                                  if r[0] in use_regions),
                             axis=1)
+    k_list = list(
+        list(zip((k[2],)*len(k[0]), range(len(k[0]))))
+        for k in fit_dict.keys()
+        if k[0][0] in use_regions
+    )
+    key_group = np.concatenate(k_list, axis=0)
 
     # side 1 and side 2 for models 1
     stim11, stim12 = _get_stim_reps(mat1, inter1, pred_func, n_pts=n_pts,
@@ -154,10 +176,24 @@ def plot_split_halfs(fit_dict, pred_func, ax=None, use_regions=None,
     if pearson_brown:
         rs_wi = 2*rs_wi/(1 + rs_wi)
         rs_ac = 2*rs_ac/(1 + rs_ac)
-    gpl.violinplot(np.expand_dims(rs_wi, 0), [wi_pt], color=[wi_color],
-                   ax=ax, showextrema=False, showmedians=True)
-    gpl.violinplot(np.expand_dims(rs_ac, 0), [ac_pt], color=[ac_color],
-                   ax=ax, showextrema=False, showmedians=True)
+    gpl.violinplot(
+        np.expand_dims(rs_wi, 0),
+        [wi_pt],
+        color=[wi_color],
+        ax=ax,
+        showextrema=False,
+        showmedians=True,
+        markerstyles=markerstyles
+    )
+    gpl.violinplot(
+        np.expand_dims(rs_ac, 0),
+        [ac_pt],
+        color=[ac_color],
+        ax=ax,
+        showextrema=False,
+        showmedians=True,
+        markerstyles=markerstyles
+    )
 
 def plot_single_neurons(data, region=None, fwid=1, comp_warnings=None):
     plots = []
@@ -316,7 +352,7 @@ def plot_stan_fits(fit_dict, pred_func, plot_points=True, ms=.1, ax=None,
     mat, inter = mraux.make_fit_matrix(fit_dict)
 
     stim1, stim2 = _get_stim_reps(mat, inter, pred_func, **kwargs)
-    ax = gpl.plot_highdim_trace(stim1, stim2, plot_points=plot_points,
+    ax = gpl.plot_highdim_trace(stim1, stim2, plot_points=lot_points,
                                 ms=ms, ax=ax)
     return ax
 
@@ -357,37 +393,6 @@ def plot_gp_fits(models, feats, acts, n_dims=10, axs=None, fwid=3, ppop_ind=0,
 lin_color = np.array((254, 189, 42))/255
 conj_color = np.array((161, 27, 155))/255
 both_color = np.array((45, 113, 142))/255
-
-nonother_div_dict = {
-    'space':('subj_ev_left-subj_ev_right',
-             'subj_ev_right-subj_ev_left'),
-    # 'space 1':('subj_ev_left-subj_ev_right',),
-    # 'space 2':('subj_ev_right-subj_ev_left',),
-    'time':('subj_ev offer 1-subj_ev offer 2',
-            'subj_ev offer 2-subj_ev offer 1'),
-}
-timeonly_div_dict = {
-    'left offer':('subj_ev_left-subj_ev_left-1',),
-    'right offer':('subj_ev_right-subj_ev_right-2',)
-}
-sideonly_div_dict = {
-    'offer 1':('subj_ev_left-subj_ev_right-0',
-               'subj_ev_right-subj_ev_left-0'),
-    'offer 2':('subj_ev_left-subj_ev_right-3',
-               'subj_ev_right-subj_ev_left-3')
-}
-sidetime_div_dict = {
-    'offer 1':('subj_ev_left-subj_ev_right-1',
-               'subj_ev_right-subj_ev_left-1'),
-    'offer 2':('subj_ev_left-subj_ev_right-2',
-               'subj_ev_right-subj_ev_left-2')
-}
-full_div_dict = {
-    'time only':timeonly_div_dict,
-    'side only':sideonly_div_dict,
-    'side-time':sidetime_div_dict,
-    'non other':nonother_div_dict,    
-}
 
 
 def plot_submanifolds(*groups, ax=None, use_means=True,
@@ -673,6 +678,37 @@ def plot_bias(data,
         ax.plot(order_bias[i], side_bias[i], 'o', color=color_dict.get(r), **kwargs)
 
 
+def plot_bhv_dec_hist(
+        dec,
+        gen,
+        regions,
+        color_dict=None,
+        ax=None,
+        fwid=2,
+        t_ind=-1,
+        minor=0,
+        u_rs=None,
+):
+    regions = np.array(regions)
+    if u_rs is None:
+        u_rs = np.unique(regions)
+    
+    n_regions = len(u_rs)
+    dec = dec[..., t_ind]
+    gen = gen[..., t_ind]
+    if ax is None:
+        f, ax = plt.subplots(1, 1)
+    for i, ur in enumerate(u_rs):
+        mask = ur == regions
+        if sum(mask) > 0:
+            diffs = dec[mask] - gen[mask]
+            avg_diff = np.mean(diffs, axis=0)
+            gpl.violinplot([avg_diff], [i + minor], ax=ax)
+            # print(ur, np.mean(avg_diff > 0))
+    gpl.add_hlines(0, ax)
+    ax.set_xticks(range(n_regions))
+    ax.set_xticklabels(u_rs)
+        
 def plot_bhv_dec(dec, gen, regions, color_dict=None, ax=None, animals=None,
                  targ_animal=None, add_lines=True, t_ind=-1, dec_pops=None,
                  gen_pops=None, **kwargs):
@@ -846,19 +882,21 @@ def plot_dists_region(out_rdm_dict, use_pairs, regions, c_colors, axs=None,
     ax_a.set_ylim((-.1, .3))
 
 
-def plot_choice_sensitivity(data,
-                            dead_perc=30, c1_targ=2,
-                            c2_targ=3,
-                            decode_var='subj_ev',
-                            use_split_dec=None,
-                            order_choice_field='choice offer 1 (==1) or 2 (==0)',
-                            side_choice_field='Choice left (==1) or Right (==0)',
-                            use_order=True,
-                            colors=None,
-                            ax=None,
-                            max_abs_diff=4,
-                            min_abs_diff=0,
-                            **kwargs):
+def plot_choice_sensitivity(
+        data,
+        dead_perc=30, c1_targ=2,
+        c2_targ=3,
+        decode_var='subj_ev',
+        use_split_dec=None,
+        order_choice_field='choice offer 1 (==1) or 2 (==0)',
+        side_choice_field='Choice left (==1) or Right (==0)',
+        use_order=True,
+        colors=None,
+        ax=None,
+        max_abs_diff=4,
+        min_abs_diff=0,
+        **kwargs
+):
     if ax is None:
         f, ax = plt.subplots(1, 1)
     if colors is None:
@@ -915,20 +953,22 @@ def plot_choice_sensitivity(data,
     return corr
 
 
-def plot_distances(path,
-                   div_dict=full_div_dict,
-                   use_other=True,
-                   other_key='side only',
-                   region_order=('OFC', 'PCC', 'pgACC', 'VS', 'vmPFC', 'all'),
-                   minor_move=.1,
-                   lin_color=lin_color,
-                   conj_color=conj_color,
-                   both_color=both_color,
-                   lin_label='linear', conj_label='mixed',
-                   nonlin_label='nonlinear',
-                   both_label='both', axs=None, fwid=3,
-                   add_val=.2,
-                   mult_nl=True):
+def plot_distances(
+        data,
+        div_dict=mra.full_div_dict,
+        use_other=True,
+        other_key='side only',
+        region_order=('OFC', 'PCC', 'pgACC', 'VS', 'vmPFC', 'all'),
+        minor_move=.1,
+        lin_color=lin_color,
+        conj_color=conj_color,
+        both_color=both_color,
+        lin_label='linear', conj_label='mixed',
+        nonlin_label='nonlinear',
+        both_label='both', axs=None, fwid=3,
+        add_val=.2,
+        mult_nl=True
+):
     if use_other:
         div_dict = div_dict[other_key]
     else:
@@ -939,7 +979,6 @@ def plot_distances(path,
                               sharex=True, sharey=True)
     else:
         f = None
-    data = sio.loadmat(path)
     max_val = 0
     for i, (div_name, dks) in enumerate(div_dict.items()):
         for j, region in enumerate(region_order):
@@ -1171,16 +1210,19 @@ def plot_data_pred(pred_vals, dec_vals, n_feats=2, n_vals=2, axs=None,
     (ax_bin, ax_gen, ax_comb) = axs
 
     dl = np.mean(pred_vals['d_l'][0, 0], axis=1)
-    dn = np.sqrt(2)*np.mean(pred_vals['d_n'][0, 0], axis=1)
+    dn = np.mean(pred_vals['d_n'][0, 0], axis=1)
+    sigma = np.mean(pred_vals['sigma'][0, 0], axis=1)
     sem = np.mean(pred_vals['sem'][0, 0], axis=1)
     p_ccgp = np.mean(pred_vals['pred_ccgp'][0, 0], axis=1, keepdims=True)
     p_bind = np.mean(pred_vals['pred_bin'][0, 0], axis=1, keepdims=True)
 
     dec_gen = np.mean(dec_vals['gen'][0, 0][..., -1], axis=1, keepdims=True)
 
-    sigma = np.mean(pred_vals['sigma'][0, 0], axis=1)
-    pwr = np.mean(dl**2 + dn**2)
+    dn = np.sqrt(2)*dn
+
+    pwr = np.mean(dl**2 + dn**2) 
     ts = np.linspace(.01, 1, 100)
+
     sigma_m = np.mean(sigma)
     sem = np.mean(sem)
     r1, gen_err = mrt.vector_corr_ccgp(pwr, ts, sigma=sigma_m, sem=sem)

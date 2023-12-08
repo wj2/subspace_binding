@@ -137,13 +137,13 @@ def rsa_preproc(a_pops, b_pops, norm=True, pre_pca=.99, trl_ax=1, feat_ax=0,
 def _rsa_theory(a_pops, b_pops, **kwargs):
     a_pops_u, b_pops_u = rsa_preproc(a_pops, b_pops, **kwargs)
     out = estimate_lin_nonlin_distance(a_pops_u, b_pops_u)
-    d_lins, d_nls, sigmas, sems = out
+    d_lins, d_nls, sigmas, sems, n_neurs = out
 
     sem_nl = np.sqrt(2*d_nls**2 + sems**2)
     pred_ccgp = _compute_ccgp(d_lins[0, 0], d_lins[0, 0], sem_nl,
                               sigmas)
     pred_bind = _compute_bind(np.sqrt(2)*d_nls, sigmas)
-    return pred_ccgp, pred_bind, (d_lins[:, 0], d_nls, sigmas, sems)
+    return pred_ccgp, pred_bind, (d_lins[:, 0], d_nls, sigmas, sems, n_neurs)
 
 
 def combined_ccgp_bind_est(train_pops, test_pops, use_rsa=True, schema=None, **kwargs):
@@ -195,8 +195,8 @@ def direct_ccgp_bind_est_pops(train_pops, test_pops, n_folds=5, test_prop=.1,
     n_pops = len(train_pops[0])
     bind_ests = np.zeros((n_pops, n_folds))
     gen_ests = np.zeros_like(bind_ests)
-    d_l, d_n, sigma, sem = list(np.zeros_like(bind_ests)
-                                for i in range(4))
+    d_l, d_n, sigma, sem, n_neurs = list(np.zeros_like(bind_ests)
+                                         for i in range(5))
     for i in range(n_pops):
         tr_ps = list(tp[i] for tp in train_pops)
         te_ps = list(tp[i] for tp in test_pops)
@@ -207,8 +207,8 @@ def direct_ccgp_bind_est_pops(train_pops, test_pops, n_folds=5, test_prop=.1,
         else:
             out = very_direct_ccgp(tr_ps, te_ps, n_folds=n_folds,
                                            test_prop=test_prop, **kwargs)
-        gen_ests[i], bind_ests[i], (d_l[i], d_n[i], sigma[i], sem[i]) = out
-    return bind_ests, gen_ests, (d_l, d_n, sigma, sem)
+        gen_ests[i], bind_ests[i], (d_l[i], d_n[i], sigma[i], sem[i], n_neurs[i]) = out
+    return bind_ests, gen_ests, (d_l, d_n, sigma, sem, n_neurs)
 
 
 def _preprocess(*pops, fit=True, norm=True, pre_pca=.99, pipe=None,
@@ -464,7 +464,7 @@ def estimate_lin_nonlin_distance(p1_group, p2_group, schema=None,
     d_nls = np.sqrt(d_nls)
     # print(d_lins, d_nls, sigmas, sems)
 
-    return d_lins, d_nls, sigmas, sems
+    return d_lins, d_nls, sigmas, sems, n_neurs
 
 
 def _mech_ccgp(a_pops, b_pops, norm=True, pre_pca=.99, trl_ax=1, feat_ax=0,
