@@ -2076,11 +2076,15 @@ def sample_fit_reps(
         fit_dict,
         pred_func,
         use_regions=None,
+        use_monkeys=None,
         n_pts=100,
         **kwargs,
 ):
     if use_regions is None:
         use_regions = ('OFC', 'PCC', 'pgACC', 'VS', 'vmPFC')
+    if use_monkeys is None:
+        use_monkeys = ('Batman', 'Calvin', 'Hobbes', 'Pumbaa', 'Spock', 'Vader')
+    print(fit_dict.keys())
     mat1 = np.concatenate(list(v[0][0] for (r, _, _), v in fit_dict.items()
                                if r[0] in use_regions),
                           axis=1)

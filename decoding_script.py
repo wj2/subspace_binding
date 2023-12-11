@@ -49,6 +49,7 @@ def create_parser():
     parser.add_argument("--use_time", action="store_true", default=False)    
     parser.add_argument("--jobid", default="0000", type=str)
     parser.add_argument("--region_ind", default=None, type=int)
+    parser.add_argument("--monkey_ind", default=None, type=int)
     return parser
 
 if __name__ == '__main__':
@@ -62,6 +63,10 @@ if __name__ == '__main__':
         regions = (all_regions[args.region_ind],)
     else:
         regions = args.regions
+    if args.monkey_ind is not None:
+        targ_m = mraux.monkey_list[args.monkey_ind]
+        s_mask = exper_data["animal"] == targ_m
+        exper_data = exper_data.session_mask(s_mask)
     
     data_field = args.data_field
     dead_perc = args.exclude_middle_percentiles
@@ -73,7 +78,7 @@ if __name__ == '__main__':
         def mask_func(x): return x <= 1
 
     decoding_results = {}
-    for region in regions:
+    for region in regions:        
         if region == "all":
             use_regions = None
         else:

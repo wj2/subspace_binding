@@ -16,6 +16,9 @@ bhv_fields_rename = {'trials.included':'include',
                      'trials.response_times':'respTime',
                      'trials.response_choice':'choice',
                      'trials.feedbackType':'feedback'}
+monkey_list = np.array(
+    ['Batman', 'Calvin', 'Hobbes', 'Pumbaa', 'Spock', 'Vader']
+)
 
 
 def remove_pops(dec_dict):
