@@ -1,0 +1,109 @@
+
+import argparse
+import scipy.stats as sts
+import numpy as np
+import pickle
+import functools as ft
+from datetime import datetime
+import os
+
+import multiple_representations.figures as mrf
+import multiple_representations.analysis as mra
+
+def create_parser():
+    parser = argparse.ArgumentParser(
+        description='perform decoding analyses on Fine data'
+    )
+    out_template = "decoding_{regions}_{jobid}.pkl"
+    parser.add_argument('-o', '--output_template', default=out_template, type=str,
+                        help='file to save the output in')
+    parser.add_argument(
+        '--output_folder',
+        default="../results/subspace_binding/decoding/",
+        type=str,
+        help='file to save the output in'
+    )
+    parser.add_argument(
+        "--data_folder",
+        default="../data/subspace_binding"
+    )
+    parser.add_argument("--subsample_neurons", default=None, type=int)
+    parser.add_argument("--pca_pre", default=.99, type=float)
+    parser.add_argument("--resamples", default=200, type=float)
+    parser.add_argument("--exclude_middle_percentiles", default=15, type=float)
+    parser.add_argument("--min_trials", default=160, type=int)
+    parser.add_argument("--dec_less", default=True, type=bool)
+    parser.add_argument("--tbeg", default=100, type=float)
+    parser.add_argument("--tend", default=1000, type=float)
+    parser.add_argument("--winsize", default=300, type=float)
+    parser.add_argument("--winstep", default=300, type=float)
+    parser.add_argument("--include_safe", action="store_true", default=False)
+    parser.add_argument("--correct_only", action="store_true", default=False)
+    all_regions = ("OFC", "PCC", "pgACC", "vmPFC", "VS", "all")
+    parser.add_argument("--regions", default=all_regions, nargs="+", type=str)
+    parser.add_argument("--data_field", default="subj_ev", type=str)
+    parser.add_argument("--use_split_dec", default=None)
+    parser.add_argument("--jobid", default="0000", type=str)
+    return parser
+
+if __name__ == '__main__':
+    parser = create_parser()
+    args = parser.parse_args()
+
+    args.date = datetime.now()
+    dec_fig = mrf.DecodingFigure()
+    exper_data = dec_fig.get_experimental_data(data_folder=args.data_folder)
+    
+    data_field = args.data_field
+    dead_perc = args.exclude_middle_percentiles
+    min_trials = args.min_trials
+    dec_less = args.dec_less
+    def mask_func(x): return x < 1
+    mask_var = "prob"
+    if args.include_safe:
+        def mask_func(x): return x <= 1
+
+    decoding_results = {}
+    for region in args.regions:
+        if region == "all":
+            use_regions = None
+        else:
+            use_regions = (region,)
+        out = mra.compute_all_generalizations(
+            exper_data,
+            args.tbeg,
+            args.tend,
+            data_field,
+            winsize=args.winsize,
+            pre_pca=args.pca_pre,
+            pop_resamples=args.resamples,
+            tstep=args.winstep,
+            time_accumulate=True,
+            regions=use_regions,
+            correct_only=args.correct_only,
+            subsample_neurons=args.subsample_neurons,
+            dead_perc=dead_perc,
+            mask_func=mask_func,
+            mask_var=mask_var,
+            min_trials=min_trials,
+            dec_less=dec_less,
+            use_split_dec=args.use_split_dec,
+        )
+        decoding_results[region] = out
+
+    pred_results = dec_fig._direct_predictions(
+        "dec", decs=decoding_results, use_regions=args.regions
+    )
+    save_dict = {
+        "args": vars(args),
+        "decoding": decoding_results,
+        "predictions": pred_results,
+    }
+    r_str = "-".join(args.regions)
+    file = args.output_template.format(
+        regions=r_str,
+        jobid=args.jobid,
+    )
+    path = os.path.join(args.output_folder, file)
+    pickle.dump(save_dict, open(path, "wb"))
+    

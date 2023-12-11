@@ -2623,14 +2623,26 @@ def generalization_analysis(data, tbeg, tend, dec_field, gen_field,
         mask_c2 = mask_c2.rs_and(choice_mask)
         gen_mask_c1 = gen_mask_c1.rs_and(choice_mask)
         gen_mask_c2 = gen_mask_c2.rs_and(choice_mask)
-    out = data.decode_masks(mask_c1, mask_c2, winsize, tbeg, tend, tstep, 
-                            pseudo=True, time_zero_field=f1_tzf,
-                            min_trials_pseudo=min_trials,
-                            resample_pseudo=pop_resamples, ret_pops=True,
-                            subsample_neurons=subsample_neurons,
-                            shuffle_trials=shuffle_trials, pre_pca=pre_pca,
-                            decode_tzf=f2_tzf, decode_m1=gen_mask_c1, 
-                            decode_m2=gen_mask_c2, **kwargs)
+    out = data.decode_masks(
+        mask_c1,
+        mask_c2,
+        winsize,
+        tbeg,
+        tend,
+        tstep, 
+        pseudo=True,
+        time_zero_field=f1_tzf,
+        min_trials_pseudo=min_trials,
+        resample_pseudo=pop_resamples,
+        ret_pops=True,
+        subsample_neurons=subsample_neurons,
+        shuffle_trials=shuffle_trials,
+        pre_pca=pre_pca,
+        decode_tzf=f2_tzf,
+        decode_m1=gen_mask_c1, 
+        decode_m2=gen_mask_c2,
+        **kwargs
+    )
     return out
 
 def regression_gen(pops_tr, rts_tr, pops_te, rts_te, model=sklm.Ridge,
@@ -2778,7 +2790,6 @@ def _compute_all_funcs(data, tbeg, tend, dec_var, func,
         else:
             mask_dec_field = mask_var + dec_suff
             mask_gen_field = mask_var + gen_suff
-        print(mask_dec_field, mask_gen_field)
         if mask_func is not None:
             dec_mask = mask_func(data[mask_dec_field])
             gen_mask = mask_func(data[mask_gen_field])
@@ -2786,8 +2797,6 @@ def _compute_all_funcs(data, tbeg, tend, dec_var, func,
             dec_mask = None
             gen_mask = None
         dec_tzf, gen_tzf = timing[i]
-        print(dec_field, dec_tzf)
-        print(gen_field, gen_tzf)
         out = func(data, tbeg, tend, dec_field, gen_field,
                    f1_mask=dec_mask, f2_mask=gen_mask,
                    f1_tzf=dec_tzf, f2_tzf=gen_tzf, **kwargs)
