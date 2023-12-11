@@ -9,6 +9,7 @@ import os
 
 import multiple_representations.figures as mrf
 import multiple_representations.analysis as mra
+import multiple_representations.auxiliary as mraux
 
 all_regions = ("OFC", "PCC", "pgACC", "vmPFC", "VS", "all")
 
@@ -103,12 +104,14 @@ if __name__ == '__main__':
     pred_results = dec_fig._direct_predictions(
         "dec", decs=decoding_results, use_regions=args.regions
     )
+
+    decoding_results = mraux.remove_pops(decoding_results)
     save_dict = {
         "args": vars(args),
         "decoding": decoding_results,
         "predictions": pred_results,
     }
-    r_str = "-".join(args.regions)
+    r_str = "-".join(regions)
     file = args.output_template.format(
         regions=r_str,
         jobid=args.jobid,

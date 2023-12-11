@@ -17,6 +17,17 @@ bhv_fields_rename = {'trials.included':'include',
                      'trials.response_choice':'choice',
                      'trials.feedbackType':'feedback'}
 
+
+def remove_pops(dec_dict):
+    new_dict = {}
+    for r, suff_dict in dec_dict.items():
+        new_dict[r] = {}
+        for suff, dec_out in suff_dict.items():
+            dec, xs, _, _, _, _, gen = dec_out
+            new_dict[r][suff] = (dec, xs, gen)
+    return new_dict
+
+
 def save_model_fits(fit_dict, output_folder):
     os.mkdir(output_folder)
     for key, item in fit_dict.items():
