@@ -43,6 +43,7 @@ def create_parser():
     parser.add_argument("--regions", default=all_regions, nargs="+", type=str)
     parser.add_argument("--data_field", default="subj_ev", type=str)
     parser.add_argument("--use_split_dec", default=None)
+    parser.add_argument("--use_time", action="store_true", default=False)    
     parser.add_argument("--jobid", default="0000", type=str)
     return parser
 
@@ -88,6 +89,7 @@ if __name__ == '__main__':
             min_trials=min_trials,
             dec_less=dec_less,
             use_split_dec=args.use_split_dec,
+            use_time=args.use_time,
         )
         decoding_results[region] = out
 
