@@ -10,6 +10,9 @@ import os
 import multiple_representations.figures as mrf
 import multiple_representations.analysis as mra
 
+all_regions = ("OFC", "PCC", "pgACC", "vmPFC", "VS", "all")
+
+
 def create_parser():
     parser = argparse.ArgumentParser(
         description='perform decoding analyses on Fine data'
@@ -39,12 +42,12 @@ def create_parser():
     parser.add_argument("--winstep", default=300, type=float)
     parser.add_argument("--include_safe", action="store_true", default=False)
     parser.add_argument("--correct_only", action="store_true", default=False)
-    all_regions = ("OFC", "PCC", "pgACC", "vmPFC", "VS", "all")
     parser.add_argument("--regions", default=all_regions, nargs="+", type=str)
     parser.add_argument("--data_field", default="subj_ev", type=str)
     parser.add_argument("--use_split_dec", default=None)
     parser.add_argument("--use_time", action="store_true", default=False)    
     parser.add_argument("--jobid", default="0000", type=str)
+    parser.add_argument("--region_ind", default=None, type=int)
     return parser
 
 if __name__ == '__main__':
@@ -54,6 +57,10 @@ if __name__ == '__main__':
     args.date = datetime.now()
     dec_fig = mrf.DecodingFigure()
     exper_data = dec_fig.get_experimental_data(data_folder=args.data_folder)
+    if args.region_ind is not None:
+        regions = (all_regions[args.region_ind],)
+    else:
+        regions = args.regions
     
     data_field = args.data_field
     dead_perc = args.exclude_middle_percentiles
@@ -65,7 +72,7 @@ if __name__ == '__main__':
         def mask_func(x): return x <= 1
 
     decoding_results = {}
-    for region in args.regions:
+    for region in regions:
         if region == "all":
             use_regions = None
         else:
