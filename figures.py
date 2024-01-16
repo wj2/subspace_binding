@@ -254,7 +254,6 @@ class SelectivityFigure(MultipleRepFigure):
                 ms=3,
             )
 
-
     def panel_subspace_corr(self, recompute=False):
         key = "subspace_corr"
         axs = self.gss[key]
@@ -273,14 +272,12 @@ class SelectivityFigure(MultipleRepFigure):
             pred_func = mra.interaction_pred
 
         groups = {
-            "full": {"t1_only": False, "t2_only": False, "decrement": 2},
-            "offer 1": {"t1_only": True, "t2_only": False},
-            "offer 2": {"t1_only": False, "t2_only": True},
+            "full": {"t1_only": False, "t2_only": False, "decrement": 1},
         }
         if self.data.get(key) is None or recompute:
             out_dict = {}
             for k, kw in groups.items():
-                out_sessions = mra.make_predictor_matrices(
+                out_sessions, _ = mra.make_predictor_matrices(
                     data,
                     t_beg=tb_on,
                     t_end=te_on,
@@ -290,7 +287,7 @@ class SelectivityFigure(MultipleRepFigure):
                 boots_on = mra.fit_bootstrap_models(out_sessions)
                 ms_on_dict[ms_k] = boots_on
 
-                out_sessions = mra.make_predictor_matrices(
+                out_sessions, _ = mra.make_predictor_matrices(
                     data,
                     t_beg=tb_delay,
                     t_end=te_delay,
@@ -326,9 +323,7 @@ class SelectivityFigure(MultipleRepFigure):
             # "full": {"markerstyles": "s"},
         }
         offsets = {
-            "offer 1": -.2,
-            "offer 2": 0,
-            "full": .2
+            "full": 0,
         }
         for k, (boots_on, boots_delay) in model_dict.items():
             for i, r in enumerate(self.regions):
@@ -376,9 +371,8 @@ class SelectivityFigure(MultipleRepFigure):
             y_label = "subspace correlation"
         axs[0].set_ylabel(y_label)
         axs[1].set_ylabel(y_label)
-
-
-    def panel_subspace_corr_monkey(self, recompute=False):
+            
+    def panel_subspace_corr_time(self, recompute=False):
         key = "subspace_corr"
         axs = self.gss[key]
         data = self.get_exper_data()
@@ -387,222 +381,40 @@ class SelectivityFigure(MultipleRepFigure):
         tb_delay = self.params.getint("tbeg_delay")
         te_delay = self.params.getint("tend_delay")
 
-
-        comp_dict = self._get_model_comp_data()
-
         use_nl_val = self.params.getboolean("use_nl_value")
         if use_nl_val:
             align_func = mra.compute_alignment_index
-            pred_dict = {
-                "linear": mra.null_spline_pred,
-                "interaction": mra.interaction_spline_pred,
-            }
+            pred_func = mra.interaction_spline_pred
         else:
             align_func = mra.compute_corr
-            pred_dict = {
-                "linear": mra.null_pred,
-                "interaction": mra.interaction_pred,
-            }
-
-        
-        model_specs = {
-                "linear": {"include_interaction": False},
-                "interaction": {"include_interaction": True},
-        }
-        n_value_bins = self.params.getint("n_value_bins")
-        n_value_trials = self.params.getint("n_value_trials")
-        monkeys = np.unique(data.data["animal"])
-        if self.data.get(key) is None or recompute:
-            out_dict = {}
-            for k, kw in groups.items():
-                ms_on_dict = {}
-                ms_delay_dict = {}
-                session_on_dict = {}
-                session_delay_dict = {}
-                for ms_k, ms in model_specs.items():
-                    out_on_sessions = mra.make_predictor_matrices(
-                        data,
-                        t_beg=tb_on,
-                        t_end=te_on,
-                        transform_value=use_nl_val,
-                        return_core_predictors=True,
-                        norm_value=False,
-                        discretize_value=True,
-                        **kw,
-                        **ms,
-                    )
-                    boots_on = mra.fit_bootstrap_models(out_on_sessions)
-                    ms_on_dict[ms_k] = boots_on
-
-                    out_delay_sessions = mra.make_predictor_matrices(
-                        data,
-                        t_beg=tb_delay,
-                        t_end=te_delay,
-                        transform_value=use_nl_val,
-                        return_core_predictors=True,
-                        norm_value=False,
-                        discretize_value=True,
-                        **kw,
-                        **ms,
-                    )
-                    boots_delay = mra.fit_bootstrap_models(out_delay_sessions)
-                    ms_delay_dict[ms_k] = boots_delay
-                r_on_dict = {}
-                r_delay_dict = {}
-                for i, r in enumerate(self.regions):
-                    if r == "all":
-                        r_list = None
-                    else:
-                        r_list = (r,)
-                    out_on = mra.compute_split_halfs_model_mix(
-                        ms_on_dict,
-                        comp_dict,
-                        pred_dict,
-                        use_regions=r_list,
-                        full_data=out_on_sessions,
-                        n_full_data_trials=n_value_trials,
-                    )
-                    r_on_dict[r] = out_on
-                    out_delay = mra.compute_split_halfs_model_mix(
-                        ms_delay_dict,
-                        comp_dict,
-                        pred_dict,
-                        use_regions=r_list,
-                        full_data=out_delay_sessions,
-                        n_full_data_trials=n_value_trials,
-                    )
-                    r_delay_dict[r] = out_delay
-                out_dict[k] = (r_on_dict, r_delay_dict)
-            self.data[key] = out_dict
-
-        model_dict = self.data[key]
-        null_color = self.params.getcolor("null_corr_color")
-        style_kw = {
-            "offer 1": {"markerstyles": "o"},
-            "offer 2": {"markerstyles": "s"},
-            # "full": {"markerstyles": "s"},
-        }
-        offsets = {
-            "offer 1": -.2,
-            "offer 2": 0,
-            "full": .2
-        }
-        for k, (r_on, r_delay) in model_dict.items():
-            for i, r in enumerate(self.regions):
-                r_color = self.get_color_dict()[r]
-                if r == "all":
-                    r_list = None
-                else:
-                    r_list = (r,)
-                rs_wi_on, rs_ac_on, rs_null_on = r_on[r]
-                mrv.plot_split_halfs_only(
-                    rs_wi_on,
-                    rs_ac_on,
-                    rs_null_on,
-                    ax=axs[0],
-                    pt=i + offsets[k],
-                    colors=(r_color, null_color, "k"),
-                    **style_kw.get(k, {}),
-                )
-                rs_wi_delay, rs_ac_delay, rs_null_delay = r_delay[r]
-                mrv.plot_split_halfs_only(
-                    rs_wi_delay,
-                    rs_ac_delay,
-                    rs_null_delay,
-                    ax=axs[1],
-                    pt=i + offsets[k],
-                    colors=(r_color, null_color, "k"),
-                    **style_kw.get(k, {}),
-                )
-        gpl.clean_plot(axs[0], 0)
-        gpl.clean_plot_bottom(axs[0])
-        gpl.clean_plot(axs[1], 0)
-        gpl.add_hlines(0, axs[0])
-        gpl.add_hlines(0, axs[1])
-        axs[1].spines["bottom"].set_visible(False)
-        axs[1].set_xticks(np.arange(len(self.regions)))
-        axs[1].set_xticklabels(self.regions)
-
-        if use_nl_val:
-            y_label = "alignment index"
-        else:
-            y_label = "subspace correlation"
-        axs[0].set_ylabel(y_label)
-        axs[1].set_ylabel(y_label)
-
-        
-    def panel_subspace_corr_model_mix(self, recompute=False):
-        key = "subspace_corr"
-        axs = self.gss[key]
-        data = self.get_exper_data()
-        tb_on = self.params.getint("tbeg_on")
-        te_on = self.params.getint("tend_on")
-        tb_delay = self.params.getint("tbeg_delay")
-        te_delay = self.params.getint("tend_delay")
-
-
-        comp_dict = self._get_model_comp_data()
-
-        use_nl_val = self.params.getboolean("use_nl_value")
-        if use_nl_val:
-            align_func = mra.compute_alignment_index
-            pred_dict = {
-                "linear": mra.null_spline_pred,
-                "interaction": mra.interaction_spline_pred,
-            }
-        else:
-            align_func = mra.compute_corr
-            pred_dict = {
-                "linear": mra.null_pred,
-                "interaction": mra.interaction_pred,
-            }
+            pred_func = mra.interaction_pred
 
         groups = {
             "full": {"t1_only": False, "t2_only": False, "decrement": 2},
             "offer 1": {"t1_only": True, "t2_only": False},
             "offer 2": {"t1_only": False, "t2_only": True},
         }
-        model_specs = {
-                "linear": {"include_interaction": False},
-                "interaction": {"include_interaction": True},
-        }
-        n_value_bins = self.params.getint("n_value_bins")
-        n_value_trials = self.params.getint("n_value_trials")
         if self.data.get(key) is None or recompute:
             out_dict = {}
             for k, kw in groups.items():
-                ms_on_dict = {}
-                ms_delay_dict = {}
-                session_on_dict = {}
-                session_delay_dict = {}
-                for ms_k, ms in model_specs.items():
-                    out_on_sessions = mra.make_predictor_matrices(
-                        data,
-                        t_beg=tb_on,
-                        t_end=te_on,
-                        transform_value=use_nl_val,
-                        return_core_predictors=True,
-                        norm_value=False,
-                        discretize_value=True,
-                        **kw,
-                        **ms,
-                    )
-                    boots_on = mra.fit_bootstrap_models(out_on_sessions)
-                    ms_on_dict[ms_k] = boots_on
+                out_sessions, _ = mra.make_predictor_matrices(
+                    data,
+                    t_beg=tb_on,
+                    t_end=te_on,
+                    transform_value=use_nl_val,
+                    **kw,
+                )
+                boots_on = mra.fit_bootstrap_models(out_sessions)
 
-                    out_delay_sessions = mra.make_predictor_matrices(
-                        data,
-                        t_beg=tb_delay,
-                        t_end=te_delay,
-                        transform_value=use_nl_val,
-                        return_core_predictors=True,
-                        norm_value=False,
-                        discretize_value=True,
-                        **kw,
-                        **ms,
-                    )
-                    boots_delay = mra.fit_bootstrap_models(out_delay_sessions)
-                    ms_delay_dict[ms_k] = boots_delay
+                out_sessions, _ = mra.make_predictor_matrices(
+                    data,
+                    t_beg=tb_delay,
+                    t_end=te_delay,
+                    transform_value=use_nl_val,
+                    **kw,
+                )
+                boots_delay = mra.fit_bootstrap_models(out_sessions)
+                
                 r_on_dict = {}
                 r_delay_dict = {}
                 for i, r in enumerate(self.regions):
@@ -610,22 +422,12 @@ class SelectivityFigure(MultipleRepFigure):
                         r_list = None
                     else:
                         r_list = (r,)
-                    out_on = mra.compute_split_halfs_model_mix(
-                        ms_on_dict,
-                        comp_dict,
-                        pred_dict,
-                        use_regions=r_list,
-                        full_data=out_on_sessions,
-                        n_full_data_trials=n_value_trials,
+                    out_on = mra.compute_split_halfs(
+                        boots_on, pred_func, use_regions=r_list
                     )
                     r_on_dict[r] = out_on
-                    out_delay = mra.compute_split_halfs_model_mix(
-                        ms_delay_dict,
-                        comp_dict,
-                        pred_dict,
-                        use_regions=r_list,
-                        full_data=out_delay_sessions,
-                        n_full_data_trials=n_value_trials,
+                    out_delay = mra.compute_split_halfs(
+                        boots_delay, pred_func, use_regions=r_list
                     )
                     r_delay_dict[r] = out_delay
                 out_dict[k] = (r_on_dict, r_delay_dict)
@@ -643,31 +445,25 @@ class SelectivityFigure(MultipleRepFigure):
             "offer 2": 0,
             "full": .2
         }
-        for k, (r_on, r_delay) in model_dict.items():
+        for k, (boots_on, boots_delay) in model_dict.items():
             for i, r in enumerate(self.regions):
                 r_color = self.get_color_dict()[r]
                 if r == "all":
                     r_list = None
                 else:
                     r_list = (r,)
-                rs_wi_on, rs_ac_on, rs_null_on = r_on[r]
                 mrv.plot_split_halfs_only(
-                    rs_wi_on,
-                    rs_ac_on,
-                    rs_null_on,
+                    *boots_on[r],
                     ax=axs[0],
                     pt=i + offsets[k],
-                    colors=(r_color, null_color, "k"),
+                    colors=(r_color, null_color, null_color),
                     **style_kw.get(k, {}),
                 )
-                rs_wi_delay, rs_ac_delay, rs_null_delay = r_delay[r]
                 mrv.plot_split_halfs_only(
-                    rs_wi_delay,
-                    rs_ac_delay,
-                    rs_null_delay,
+                    *boots_delay[r],
                     ax=axs[1],
                     pt=i + offsets[k],
-                    colors=(r_color, null_color, "k"),
+                    colors=(r_color, null_color, null_color),
                     **style_kw.get(k, {}),
                 )
         gpl.clean_plot(axs[0], 0)
@@ -685,6 +481,277 @@ class SelectivityFigure(MultipleRepFigure):
             y_label = "subspace correlation"
         axs[0].set_ylabel(y_label)
         axs[1].set_ylabel(y_label)
+
+
+    def fit_subspace_models(
+            self,
+            t_on,
+            t_off,
+            tstep=None,
+            tsize=None,
+            discretize_value=False,
+            norm_value=True,
+    ):
+        data = self.get_exper_data()
+
+        model_specs = {
+                "linear": {"include_interaction": False},
+                "interaction": {"include_interaction": True},
+        }
+        n_value_bins = self.params.getint("n_value_bins")
+        use_nl_val = self.params.getboolean("use_nl_value")
+
+        ms_dict = {}
+        for ms_k, ms in model_specs.items():
+            out_sessions, xs = mra.make_predictor_matrices(
+                data,
+                t_beg=t_on,
+                t_end=t_off,
+                tstep=tstep,
+                twin=tsize,
+                transform_value=use_nl_val,
+                return_core_predictors=True,
+                norm_value=norm_value,
+                discretize_value=discretize_value,
+                n_value_bins=n_value_bins,
+                **ms,
+            )
+            boots = mra.fit_bootstrap_models(out_sessions)
+            ms_dict[ms_k] = boots, xs, out_sessions
+        return ms_dict
+
+    def compute_subspace_corr(
+            self,
+            ms_dict,
+            region,
+            monkey,
+            model_combination="interaction",
+            discretize_value=False,
+            single_time=True,
+            out_sessions=None,
+    ):
+        if model_combination == "weighted_sum":
+            comp_dict = self._get_model_comp_data()
+        else:
+            comp_dict = None
+
+        use_nl_val = self.params.getboolean("use_nl_value")
+        if use_nl_val:
+            align_func = mra.compute_alignment_index
+            pred_dict = {
+                "linear": mra.null_spline_pred,
+                "interaction": mra.interaction_spline_pred,
+            }
+        else:
+            align_func = mra.compute_corr
+            pred_dict = {
+                "linear": mra.null_pred,
+                "interaction": mra.interaction_pred,
+            }
+        if region == "all":
+            r_list = None
+        else:
+            r_list = (region,)
+        if monkey == "all":
+            m_list = None
+        else:
+            m_list = (monkey,)
+        n_value_trials = self.params.getint("n_value_trials")
+
+        out_on = mra.compute_split_halfs_model_mix(
+            ms_dict,
+            comp_dict,
+            pred_dict,
+            align_func=align_func,
+            use_regions=r_list,
+            full_data=out_sessions,
+            n_full_data_trials=n_value_trials,
+            use_monkeys=m_list,
+            compute_null=discretize_value,
+            model_combination=model_combination,
+        )
+        return out_on
+    
+    def plot_subspace_corr(self, ax, r_dict, style_dict=None, offset=.5):
+        if style_dict is None:
+            style_dict = {}
+            
+        null1_color = self.params.getcolor("null_corr_color")
+        null2_color = self.params.getcolor("null_corr_color")
+        for i, r in enumerate(self.regions):
+            r_color = self.get_color_dict()[r]
+            n_items = len(r_dict[r])
+            for j, (m, (rs_wi_on, rs_ac_on, rs_null_on)) in enumerate(r_dict[r].items()):
+                mrv.plot_split_halfs_only(
+                    rs_wi_on,
+                    rs_ac_on,
+                    rs_null_on,
+                    ax=ax,
+                    pt=i + (j - n_items/2)*offset/n_items,
+                    colors=(r_color, null1_color, null2_color),
+                    **style_dict.get(m, {})
+                )
+                high, low = u.conf_interval(
+                    rs_ac_on - rs_wi_on, withmean=True, perc=90,
+                )[:, 0]
+                print("{region}, {monkey}, ON: {low:.2f} to {high:.2f}".format(
+                    monkey=m, region=r, low=low, high=high,
+                ))
+                    
+        gpl.clean_plot(ax, 0)
+        gpl.add_hlines(0, ax)
+        ax.set_xticks(np.arange(len(self.regions)))
+        ax.set_xticklabels(self.regions)
+        ax.set_ylabel("subspace correlation")
+
+    def panel_subspace_corr_tc(self, recompute=False):
+        key_gen = "subspace_corr_tc"
+        key_spec = "subspace_corr_tc"
+        ax = self.gss[key_gen]
+        tc_start = self.params.getint("tc_start")
+        tc_end = self.params.getint("tc_end")
+        twin = self.params.getint("twin")
+        tstep = self.params.getint("tstep")
+        
+        if self.data.get(key_gen) is None or recompute:
+            ms_dict, xs = self.fit_subspace_models_tc(tc_start, tc_end, tstep, twin)
+            self.data[key_gen] = (ms_dict, xs)
+        ms_dict, xs = self.data[key_gen]
+        if self.data.get(key_spec) is None or recompute:
+            r_dict = {}
+            for i, r in enumerate(self.regions):
+                r_dict[r] = {}
+                # NEED TO REWORK TO FIT CORRECTLY
+                r_dict[r]["full"] = self.compute_subspace_corr(
+                    ms_dict, r, None, model_combination="interaction",
+                )
+            self.data[key_spec] = r_dict, xs
+        r_dict, xs = self.data[key_spec]
+
+        self.plot_subspace_corr(ax, r_dict)
+        if self.params.getboolean("use_nl_val"):
+            y_label = "alignment index"
+        else:
+            y_label = "subspace correlation"
+        ax.set_ylabel(y_label)
+        gpl.clean_plot_bottom(ax)
+
+        
+    def panel_subspace_corr_monkey(self, recompute=False):
+        key_gen = "subspace_corr"
+        key_spec = "subspace_corr_monkey"
+        axs = self.gss[key_gen]
+
+        tb_on = self.params.getint("tbeg_on")
+        te_on = self.params.getint("tend_on")
+        tb_delay = self.params.getint("tbeg_delay")
+        te_delay = self.params.getint("tend_delay")
+
+        if self.data.get(key_gen) is None or recompute:
+            ms_on_dict = self.fit_subspace_models(tb_on, te_on)
+            ms_delay_dict = self.fit_subspace_models(tb_delay, te_delay)
+            self.data[key_gen] = (ms_on_dict, ms_delay_dict)
+        out = self.data["subspace_corr"]
+        ms_on_dict, ms_delay_dict = out
+        if self.data.get(key_spec) is None or recompute:
+            r_on_dict = {}
+            r_delay_dict = {}
+            for i, r in enumerate(self.regions):
+                monkeys = mraux.region_monkey_dict[r]
+                r_on_dict[r] = {}
+                r_delay_dict[r] = {}
+                for use_m in monkeys:
+                    r_on_dict[r][use_m] = self.compute_subspace_corr(
+                        ms_on_dict,
+                        r,
+                        use_m,
+                        model_combination="interaction",
+                    )
+                    r_delay_dict[r][use_m] = self.compute_subspace_corr(
+                        ms_delay_dict,
+                        r,
+                        use_m,
+                        model_combination="interaction",
+                    )
+            self.data[key_spec] = (r_on_dict, r_delay_dict)
+
+        r_on, r_delay = self.data[key_spec]
+        markers = {
+            "Batman": {"markerstyles": "s"},
+            "Calvin": {"markerstyles": "o"},
+            "Hobbes": {"markerstyles": "x"},
+            "Pumbaa":{"markerstyles": "*"},
+            "Spock": {"markerstyles": "v"},
+            "Vader": {"markerstyles": "D"},
+        }
+        self.plot_subspace_corr(axs[0], r_on, style_dict=markers)
+        self.plot_subspace_corr(axs[1], r_delay, style_dict=markers)
+        if self.params.getboolean("use_nl_val"):
+            y_label = "alignment index"
+        else:
+            y_label = "subspace correlation"
+        axs[0].set_ylabel(y_label)
+        axs[1].set_ylabel(y_label)
+        axs[1].spines["bottom"].set_visible(False)
+        gpl.clean_plot_bottom(axs[0])
+        
+    def panel_subspace_corr_model_mix(self, recompute=False):
+        key_gen = "subspace_corr"
+        key_spec = "subspace_corr_model_mix"
+        axs = self.gss[key_gen]
+
+        tb_on = self.params.getint("tbeg_on")
+        te_on = self.params.getint("tend_on")
+        tb_delay = self.params.getint("tbeg_delay")
+        te_delay = self.params.getint("tend_delay")
+
+        if self.data.get(key_gen) is None or recompute:
+            ms_on_dict = self.fit_subspace_models(tb_on, te_on)
+            ms_delay_dict = self.fit_subspace_models(tb_delay, te_delay)
+            self.data[key_gen] = (ms_on_dict, ms_delay_dict)
+        out = self.data["subspace_corr"]
+        model_combination = "weighted_sum"
+        monkey = "all"
+        ms_on_dict, ms_delay_dict = out
+        if self.data.get(key_spec) is None or recompute:
+            r_on_dict = {}
+            r_delay_dict = {}
+            for i, r in enumerate(self.regions):
+                r_on_dict[r] = {}
+                r_delay_dict[r] = {}
+                r_on_dict[r][monkey] = self.compute_subspace_corr(
+                        ms_on_dict,
+                        r,
+                        monkey,
+                        model_combination=model_combination,
+                )
+                r_delay_dict[r][monkey] = self.compute_subspace_corr(
+                        ms_delay_dict,
+                        r,
+                        monkey,
+                        model_combination=model_combination,
+                )
+            self.data[key_spec] = (r_on_dict, r_delay_dict)
+
+        r_on, r_delay = self.data[key_spec]
+        markers = {
+            "Batman": {"markerstyles": "s"},
+            "Calvin": {"markerstyles": "o"},
+            "Hobbes": {"markerstyles": "x"},
+            "Pumbaa":{"markerstyles": "*"},
+            "Spock": {"markerstyles": "v"},
+            "Vader": {"markerstyles": "D"},
+        }
+        self.plot_subspace_corr(axs[0], r_on, style_dict=markers)
+        self.plot_subspace_corr(axs[1], r_delay, style_dict=markers)
+        if self.params.getboolean("use_nl_val"):
+            y_label = "alignment index"
+        else:
+            y_label = "subspace correlation"
+        axs[0].set_ylabel(y_label)
+        axs[1].set_ylabel(y_label)
+        axs[1].spines["bottom"].set_visible(False)
+        gpl.clean_plot_bottom(axs[0])
 
 
 class DecodingFigure(MultipleRepFigure):
@@ -1159,8 +1226,6 @@ class SIDecodingFigure(MultipleRepFigure):
 
     def make_gss(self):
         gss = {}
-        use_contrasts = self.params.getlist("use_contrasts")
-        # n_conds = len(use_contrasts)
 
         gs_contrasts = pu.make_mxn_gridspec(self.gs, 2, 1, 0, 100, 0, 100, 5, 5)
         axs_contrasts = self.get_axs(
@@ -1176,9 +1241,6 @@ class SIDecodingFigure(MultipleRepFigure):
 
         preds, decs = self._get_gen_emp_pred()
         regions = self.params.getlist("use_regions")
-
-        folder = self.params.get("decoding_folder")
-        pred_path = self.params.get("pred_file")
 
         use_contrasts = self.params.getlist("use_contrasts")
         if use_contrasts is None:
@@ -1727,7 +1789,7 @@ class CombinedRepFigure(MultipleRepFigure):
             pred_func = mra.interaction_pred
 
         if self.data.get(key) is None or recompute:
-            out_sessions = mra.make_predictor_matrices(
+            out_sessions, _ = mra.make_predictor_matrices(
                 data,
                 t_beg=tb,
                 t_end=te,
@@ -1736,7 +1798,7 @@ class CombinedRepFigure(MultipleRepFigure):
             )
             boots_full = mra.fit_bootstrap_models(out_sessions)
 
-            out_sessions = mra.make_predictor_matrices(
+            out_sessions, _ = mra.make_predictor_matrices(
                 data,
                 t_beg=tb,
                 t_end=te,
@@ -2138,9 +2200,6 @@ class TheoryFigure(MultipleRepFigure):
         preds, decs = self._get_gen_emp_pred()
         regions = self.params.getlist("use_regions")
 
-        folder = self.params.get("decoding_folder")
-        pred_path = self.params.get("pred_file")
-
         normalize_dimensions = self.params.getboolean("normalize_dimensions")
         n_virtual_dims = self.params.getint("n_virtual_dims")
 
@@ -2167,16 +2226,20 @@ class TheoryFigure(MultipleRepFigure):
             for j, contrast in enumerate(contrasts):
                 pred_ij = preds[region][contrast]
                 dec_ij = decs[region][contrast]
+                comp_pred_ij = preds[comp_region][contrast]
                 color = self.get_color_dict()[region]
                 try:
+                    print("{}-{}".format(region, comp_region), cnames[j])
                     mrv.plot_data_pred(
                         pred_ij[0, 0],
                         dec_ij[0, 0],
                         axs=axs[j],
                         label=region,
                         color=color,
+                        comp_pred=comp_pred_ij[0, 0],
                     )
-                except IndexError:
+                except IndexError as e:
+                    print(e)
                     s = "did not plot {} for {} (likely a nan)"
                     print(s.format(region, contrast))
                 axs_dists[0, j].set_yticks([0, 1, 2])

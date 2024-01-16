@@ -17,37 +17,39 @@ import multiple_representations.auxiliary as mraux
 import multiple_representations.theory as mrt
 
 
-def _get_stim_reps(mat, inter, pred_func, val_ext=(-1.5, 1.5), n_pts=100,
-                   link_function=None, zero_preds=None):
-    vals = np.expand_dims(np.linspace(*val_ext, n_pts), 1)
-    side1 = np.ones((n_pts, 1))
-    side2 = -np.ones((n_pts, 1))
+# def _get_stim_reps(mat, inter, pred_func, val_ext=(-1.5, 1.5), n_pts=100,
+#                    link_function=None, zero_preds=None):
+#     vals = np.expand_dims(np.linspace(*val_ext, n_pts), 1)
+#     side1 = np.ones((n_pts, 1))
+#     side2 = -np.ones((n_pts, 1))
 
-    args1 = np.concatenate((vals, side1), axis=1)
-    args2 = np.concatenate((vals, side2), axis=1)
+#     args1 = np.concatenate((vals, side1), axis=1)
+#     args2 = np.concatenate((vals, side2), axis=1)
 
-    pred1 = pred_func(args1)
-    pred2 = pred_func(args2)
+#     pred1 = pred_func(args1)
+#     pred2 = pred_func(args2)
 
-    pred1 = np.expand_dims(pred1, (0, 1))
-    pred2 = np.expand_dims(pred2, (0, 1))
+#     pred1 = np.expand_dims(pred1, (0, 1))
+#     pred2 = np.expand_dims(pred2, (0, 1))
 
-    if zero_preds is not None:
-        if zero_preds == 'right':
-            pred1 = np.concatenate((pred1, np.zeros_like(pred1)), axis=-1)
-            pred2 = np.concatenate((pred2, np.zeros_like(pred2)), axis=-1)
-        else:
-            pred1 = np.concatenate((np.zeros_like(pred1), pred1), axis=-1)
-            pred2 = np.concatenate((np.zeros_like(pred2), pred2), axis=-1)
+#     if zero_preds is not None:
+#         if zero_preds == 'right':
+#             pred1 = np.concatenate((pred1, np.zeros_like(pred1)), axis=-1)
+#             pred2 = np.concatenate((pred2, np.zeros_like(pred2)), axis=-1)
+#         else:
+#             pred1 = np.concatenate((np.zeros_like(pred1), pred1), axis=-1)
+#             pred2 = np.concatenate((np.zeros_like(pred2), pred2), axis=-1)
 
-    mat_use = np.expand_dims(mat, 2)
+#     mat_use = np.expand_dims(mat, 2)
+#     np.expand_dims(pred1, -1)
+#     np.expand_dims(pred2, -1)
 
-    stim1 = np.swapaxes(np.sum(mat_use*pred1, axis=-1) + inter, 1, 2)
-    stim2 = np.swapaxes(np.sum(mat_use*pred2, axis=-1) + inter, 1, 2)
-    if link_function is not None:
-        stim1 = link_function(stim1)
-        stim2 = link_function(stim2)
-    return stim1, stim2
+#     stim1 = np.swapaxes(np.sum(mat_use*pred1, axis=-1) + inter, 1, 2)
+#     stim2 = np.swapaxes(np.sum(mat_use*pred2, axis=-1) + inter, 1, 2)
+#     if link_function is not None:
+#         stim1 = link_function(stim1)
+#         stim2 = link_function(stim2)
+#     return stim1, stim2
 
 
 def plot_split_halfs_full(fit_dict, pred_func, ax=None, use_regions=None,
@@ -71,15 +73,15 @@ def plot_split_halfs_full(fit_dict, pred_func, ax=None, use_regions=None,
                             axis=1)
 
     # side 1 and side 2 for models 1
-    stim11_o1, stim12_o1 = _get_stim_reps(mat1, inter1, pred_func, n_pts=n_pts,
+    stim11_o1, stim12_o1 = mra._get_stim_reps(mat1, inter1, pred_func, n_pts=n_pts,
                                           zero_preds=zp1, **kwargs)
-    stim11_o2, stim12_o2 = _get_stim_reps(mat1, inter1, pred_func, n_pts=n_pts,
+    stim11_o2, stim12_o2 = mra._get_stim_reps(mat1, inter1, pred_func, n_pts=n_pts,
                                           zero_preds=zp2, **kwargs)
 
     # side 1 and side 2 for models 2
-    stim21_o1, stim22_o1 = _get_stim_reps(mat2, inter2, pred_func, n_pts=n_pts,
+    stim21_o1, stim22_o1 = mra._get_stim_reps(mat2, inter2, pred_func, n_pts=n_pts,
                                           zero_preds=zp1, **kwargs)
-    stim21_o2, stim22_o2 = _get_stim_reps(mat2, inter2, pred_func, n_pts=n_pts,
+    stim21_o2, stim22_o2 = mra._get_stim_reps(mat2, inter2, pred_func, n_pts=n_pts,
                                           zero_preds=zp2, **kwargs)
 
     rs_wi_d = align_func(stim11_o2, stim12_o2)
@@ -162,11 +164,11 @@ def plot_split_halfs(fit_dict, pred_func, ax=None, use_regions=None,
     key_group = np.concatenate(k_list, axis=0)
 
     # side 1 and side 2 for models 1
-    stim11, stim12 = _get_stim_reps(mat1, inter1, pred_func, n_pts=n_pts,
+    stim11, stim12 = mra._get_stim_reps(mat1, inter1, pred_func, n_pts=n_pts,
                                     **kwargs)
 
     # side 1 and side 2 for models 2
-    stim21, stim22 = _get_stim_reps(mat2, inter2, pred_func, n_pts=n_pts,
+    stim21, stim22 = mra._get_stim_reps(mat2, inter2, pred_func, n_pts=n_pts,
                                     **kwargs)
 
     rs_wi = align_func(stim11, stim12)
@@ -327,7 +329,7 @@ def plot_stan_corr(fit_dict, pred_func, ax=None, align_func=mra.compute_corr,
                    **kwargs):
     mat, inter = mraux.make_fit_matrix(fit_dict)
 
-    stim1, stim2 = _get_stim_reps(mat, inter, pred_func, n_pts=2, **kwargs)
+    stim1, stim2 = mra._get_stim_reps(mat, inter, pred_func, n_pts=2, **kwargs)
 
     rs = np.expand_dims(align_func(stim1, stim2), 0)
     gpl.violinplot(rs, [0], ax=ax)
@@ -343,7 +345,7 @@ def plot_sklm_fits(fit_dict, pred_func, ax=None, use_regions=None,
     inter = np.concatenate(list(v[0][1] for (r, _, _), v in fit_dict.items()
                                 if r[0] in use_regions),
                            axis=1)
-    stim1, stim2 = _get_stim_reps(mat, inter, pred_func, n_pts=n_pts,
+    stim1, stim2 = mra._get_stim_reps(mat, inter, pred_func, n_pts=n_pts,
                                   **kwargs)
     return gpl.plot_highdim_trace(stim1, stim2, ax=ax)
     
@@ -351,7 +353,7 @@ def plot_stan_fits(fit_dict, pred_func, plot_points=True, ms=.1, ax=None,
                    **kwargs):
     mat, inter = mraux.make_fit_matrix(fit_dict)
 
-    stim1, stim2 = _get_stim_reps(mat, inter, pred_func, **kwargs)
+    stim1, stim2 = mra._get_stim_reps(mat, inter, pred_func, **kwargs)
     ax = gpl.plot_highdim_trace(stim1, stim2, plot_points=lot_points,
                                 ms=ms, ax=ax)
     return ax
@@ -1204,7 +1206,7 @@ def plot_dec_gen_pred(pred_vals, dec_vals, x_val, ax=None, minor_tick=.2,
 
 
 def plot_data_pred(pred_vals, dec_vals, n_feats=2, n_vals=2, axs=None,
-                   color=None, line_alpha=.2, label=''):
+                   color=None, line_alpha=.2, label='', comp_pred=None):
     if axs is None:
         f, axs = plt.subplots(1, 3)
     (ax_bin, ax_gen, ax_comb) = axs
@@ -1219,6 +1221,16 @@ def plot_data_pred(pred_vals, dec_vals, n_feats=2, n_vals=2, axs=None,
     dec_gen = np.mean(dec_vals['gen'][0, 0][..., -1], axis=1, keepdims=True)
 
     dn = np.sqrt(2)*dn
+
+    if comp_pred is not None:
+        comp_ccgp = np.mean(comp_pred['pred_ccgp'][0, 0], axis=1, keepdims=True)
+        comp_bind = np.mean(comp_pred['pred_bin'][0, 0], axis=1, keepdims=True)
+        high, low = u.conf_interval(p_ccgp - comp_ccgp, withmean=True)[:, 0]
+        p = np.mean(p_ccgp - comp_ccgp > 0)
+        print("ccgp: {low:.2f} - {high:.2f}, p = {p}".format(low=low, high=high, p=p))
+        high, low = u.conf_interval(p_bind - comp_bind, withmean=True)[:, 0]
+        p = np.mean(p_bind - comp_bind > 0)
+        print("bind: {low:.2f} - {high:.2f}, p = {p}".format(low=low, high=high, p=p))
 
     pwr = np.mean(dl**2 + dn**2) 
     ts = np.linspace(.01, 1, 100)

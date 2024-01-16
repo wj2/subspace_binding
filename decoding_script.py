@@ -1,9 +1,6 @@
 
 import argparse
-import scipy.stats as sts
-import numpy as np
 import pickle
-import functools as ft
 from datetime import datetime
 import os
 
@@ -46,7 +43,8 @@ def create_parser():
     parser.add_argument("--regions", default=all_regions, nargs="+", type=str)
     parser.add_argument("--data_field", default="subj_ev", type=str)
     parser.add_argument("--use_split_dec", default=None)
-    parser.add_argument("--use_time", action="store_true", default=False)    
+    parser.add_argument("--use_time", action="store_true", default=False)
+    parser.add_argument("--time_accumulate", action="store_true", default=False)
     parser.add_argument("--jobid", default="0000", type=str)
     parser.add_argument("--region_ind", default=None, type=int)
     parser.add_argument("--monkey_ind", default=None, type=int)
@@ -92,7 +90,7 @@ if __name__ == '__main__':
             pre_pca=args.pca_pre,
             pop_resamples=args.resamples,
             tstep=args.winstep,
-            time_accumulate=True,
+            time_accumulate=args.time_accumulate,
             regions=use_regions,
             correct_only=args.correct_only,
             subsample_neurons=args.subsample_neurons,

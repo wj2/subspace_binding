@@ -19,7 +19,14 @@ bhv_fields_rename = {'trials.included':'include',
 monkey_list = np.array(
     ['Batman', 'Calvin', 'Hobbes', 'Pumbaa', 'Spock', 'Vader']
 )
-
+region_monkey_dict = {
+    "OFC": ('Pumbaa', 'Spock', 'Vader'),
+    "PCC": ('Pumbaa', 'Spock'),
+    "VS": ('Batman', 'Calvin'),
+    "pgACC": ('Batman', 'Vader'),
+    "vmPFC": ('Batman', 'Hobbes'),
+    "all": ('Batman', 'Calvin', 'Hobbes', 'Pumbaa', 'Spock', 'Vader')
+}
 
 def remove_pops(dec_dict):
     new_dict = {}
@@ -104,7 +111,6 @@ def load_many_fits(folder, types=all_types, nums=all_nums,
             for i in range(len(sess[1])):
                 neur_type_dict = {t:n_dict[t][k][1][i] for t in types}
                 x = az.compare(neur_type_dict)
-                best_model = x.index[0]
                 comp_dict[(regions[i], animal, info, i)] = x
                 az_dict[(regions[i], animal, info, i)] = neur_type_dict
     return az_dict, comp_dict

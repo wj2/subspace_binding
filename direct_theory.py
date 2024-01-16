@@ -2,7 +2,6 @@
 import numpy as np
 import sklearn.model_selection as skms
 import scipy.stats as sts
-import scipy.special as ss
 import itertools as it
 
 import general.utility as u
@@ -175,10 +174,8 @@ def combined_ccgp_bind_est(train_pops, test_pops, use_rsa=True, schema=None, **k
     n_neurs = rdms[0].descriptors['noise'].shape[0]
     print(np.mean(rdms_all*n_neurs, axis=0))
     print(rdms_all[0])
-    rng = np.random.default_rng()
     for i in range(n_pops):
         n_neurs = sep_rdms[i][0].descriptors['noise'].shape[0]
-        inds = rng.choice(n_pops, n_pops)
         d_lins[i], d_nls[i], _ = decompose_all_distance_matrices(
             np.mean(rdms_all[i:i+1], axis=0, keepdims=True), schema, n_neurs
         )
@@ -191,7 +188,7 @@ def combined_ccgp_bind_est(train_pops, test_pops, use_rsa=True, schema=None, **k
 
 
 def direct_ccgp_bind_est_pops(train_pops, test_pops, n_folds=5, test_prop=.1,
-                              use_rsa=True, **kwargs):
+                              **kwargs):
     n_pops = len(train_pops[0])
     bind_ests = np.zeros((n_pops, n_folds))
     gen_ests = np.zeros_like(bind_ests)
@@ -200,13 +197,7 @@ def direct_ccgp_bind_est_pops(train_pops, test_pops, n_folds=5, test_prop=.1,
     for i in range(n_pops):
         tr_ps = list(tp[i] for tp in train_pops)
         te_ps = list(tp[i] for tp in test_pops)
-        if use_rsa:
-            out = _rsa_theory(tr_ps, te_ps)
-        elif test_prop == 0:
-            out = _mech_ccgp(tr_ps, te_ps, **kwargs)
-        else:
-            out = very_direct_ccgp(tr_ps, te_ps, n_folds=n_folds,
-                                           test_prop=test_prop, **kwargs)
+        out = _rsa_theory(tr_ps, te_ps)
         gen_ests[i], bind_ests[i], (d_l[i], d_n[i], sigma[i], sem[i], n_neurs[i]) = out
     return bind_ests, gen_ests, (d_l, d_n, sigma, sem, n_neurs)
 
@@ -467,60 +458,6 @@ def estimate_lin_nonlin_distance(p1_group, p2_group, schema=None,
     return d_lins, d_nls, sigmas, sems, n_neurs
 
 
-def _mech_ccgp(a_pops, b_pops, norm=True, pre_pca=.99, trl_ax=1, feat_ax=0,
-               accumulate_time=True, empirical=False):
-    if accumulate_time:
-        a_pops = list(np.squeeze(_accumulate_time(tp, ax=0))
-                      for tp in a_pops)
-        b_pops = list(np.squeeze(_accumulate_time(tp, ax=0))
-                      for tp in b_pops)
-    out = _preprocess(*(a_pops + b_pops), norm=norm, pre_pca=pre_pca,
-                      trl_ax=trl_ax, sigma_est=None)
-    out_pops, pipe, cent, sigma_est = out
-    a_tr_i, b_tr_i = out_pops[:2], out_pops[2:]
-    a_te_i, b_te_i = out_pops[:2], out_pops[2:]
-
-    f1, d_ll_n, inter = _get_pair_ax(*a_tr_i)
-    f1_g, d_lg_n, _ = _get_pair_ax(*b_tr_i)
-
-    p_ll = np.dot(f1.T, d_lg_n*f1_g)
-    d_prod = p_ll*d_ll_n
-    if d_prod < 0:
-        d_prod = 0
-
-    delt2 = d_lg_n**2 - d_ll_n**2
-    
-    d_ll2 = .5*(np.sqrt(4*d_prod**2 + delt2**2) - delt2)
-    d_ll = np.sqrt(d_ll2)
-    d_lg = np.sqrt(d_ll2 + delt2)
-
-    # d_ne = np.sqrt(d_ll_n**2 - d_prod)
-    d_ne = np.sqrt(d_ll_n*d_lg_n - d_prod)
-    
-    d_l = np.sqrt(d_prod)
-    sigma = np.sqrt(_est_noise(*(a_tr_i + b_tr_i), proj_ax=f1,
-                               intercept=inter))
-    sem = _est_sem(*(a_tr_i + b_tr_i), sub_ax=f1)
-    
-    corrected_d_n = np.sqrt(d_ne**2 - sem**2)
-    if np.isnan(corrected_d_n):
-        corrected_d_n = 0
-    uncorrected_d_n = d_ne
-    # print('old dn {}\nnew dn {}'.format(d_ne, corrected_d_n))
-    # print(d_ne, sem)
-    # print('corr', d_l**2/(d_l**2 + corrected_d_n**2))
-    gen_err = _compute_ccgp(d_l, d_l, uncorrected_d_n, sigma)
-    bin_err = _compute_bind(corrected_d_n, sigma)
-
-    if empirical:
-        dists = np.array(_proj_pops(f1, *b_tr_i, intercept=inter))
-        dists_wi = np.array(_proj_pops(f1, *a_te_i, intercept=inter))
-
-        err1 = sts.norm(0, 1).cdf(-(dists[0] - d_ll_n/2)/(sigma))
-        err2 = sts.norm(0, 1).cdf((dists[1] - d_ll_n/2)/(sigma))
-        gen_err = (err1 + err2)/2 
-    return gen_err, bin_err, (d_l, corrected_d_n, sigma, sem)
-
 def _est_sem(*pops, sub_ax=None, mean=True):
     ests = np.zeros(len(pops))
     for i, pop in enumerate(pops):
@@ -538,82 +475,6 @@ def _est_sem(*pops, sub_ax=None, mean=True):
         full_est = np.sqrt(np.sum(ests**2))
     return full_est
 
-def very_direct_ccgp(a_pops, b_pops, accumulate_time=True, norm=True, pre_pca=.99,
-                     n_folds=2, trl_ax=1, feat_ax=0,
-                     splitter=skms.ShuffleSplit, test_prop=.1,
-                     empirical=True):
-    """ R x D x """
-    if accumulate_time:
-        a_pops = list(np.squeeze(_accumulate_time(tp, ax=0))
-                      for tp in a_pops)
-        b_pops = list(np.squeeze(_accumulate_time(tp, ax=0))
-                      for tp in b_pops)
-    a_pops_splitters = list(
-        splitter(n_folds, test_size=test_prop).split(a_pop_i.T)
-        for i, a_pop_i in enumerate(a_pops))
-    b_pops_splitters = list(
-        splitter(n_folds, test_size=test_prop).split(b_pop_i.T)
-        for i, b_pop_i in enumerate(b_pops))
-    d_l = np.zeros(n_folds)
-    d_n = np.zeros_like(d_l)
-    sigma = np.zeros_like(d_l)
-    gen_err = np.zeros_like(d_l)
-    bin_err = np.zeros_like(d_l)
-    for i in range(n_folds):
-        a_tr_i, a_te_i = _get_splitter_pops(a_pops_splitters, a_pops)
-        b_tr_i, b_te_i = _get_splitter_pops(b_pops_splitters, b_pops)
-
-        out = _preprocess(*(a_tr_i + b_tr_i), norm=norm, pre_pca=pre_pca,
-                          trl_ax=trl_ax, sigma_est=None)
-        out_pops, pipe, cent, sigma_est = out
-        # print(a_tr_i[0].shape, a_tr_i[1].shape,
-        #       b_tr_i[0].shape, b_tr_i[1].shape)
-        a_tr_i, b_tr_i = out_pops[:2], out_pops[2:]
-        # print(a_tr_i[0].shape, a_tr_i[1].shape,
-        #       b_tr_i[0].shape, b_tr_i[1].shape)
-
-        out = _preprocess(*(a_te_i + b_te_i), norm=norm, pre_pca=pre_pca,
-                          trl_ax=trl_ax, pipe=pipe, cent=cent,
-                          fit=False, sigma_est=sigma_est)
-        out_pops, pipe, cent = out
-        a_te_i, b_te_i = out_pops[:2], out_pops[2:]
-
-        f1, d_ll_n, inter = _get_pair_ax(*a_tr_i)
-        f1_g, d_lg_n, _ = _get_pair_ax(*b_tr_i)
-
-        f1_te, d_ll_te_n, inter_te = _get_pair_ax(*a_te_i)
-        f1_g_te, d_lg_te_n, _ = _get_pair_ax(*b_te_i)
-
-        f1_common, _, _, i_common = _get_shared_ax((a_tr_i[0], b_tr_i[0]),
-                                                   (a_tr_i[1], b_tr_i[1]))
-
-        p_ll = np.dot(f1.T, d_lg_n*f1_g)
-        d_prod = p_ll*d_ll_n
-
-        delt2 = d_lg_n**2 - d_ll_n**2
-
-        d_ll2 = .5*(np.sqrt(4*d_prod**2 + delt2**2) - delt2)
-        d_ll = np.sqrt(d_ll2)
-        d_lg = np.sqrt(d_ll2 + delt2)
-        
-        d_nn = np.sqrt(d_ll_n**2 - d_prod)
-        
-        d_l[i] = np.sqrt(d_prod)
-        d_n[i] = d_nn
-        sigma[i] = np.sqrt(_est_noise(*(a_tr_i + b_tr_i), proj_ax=f1,
-                                      intercept=inter))
-        gen_err[i] = _compute_ccgp(d_l[i], d_l[i], d_n[i], sigma[i])
-        bin_err[i] = _compute_bind(d_n[i], sigma[i])
-
-        if empirical:
-            dists = np.array(_proj_pops(f1, *b_tr_i, intercept=inter))
-            dists_wi = np.array(_proj_pops(f1, *a_te_i, intercept=inter))
-
-            err1 = sts.norm(0, 1).cdf(-(dists[0] - d_ll_n/2)/(sigma))
-            err2 = sts.norm(0, 1).cdf((dists[1] - d_ll_n/2)/(sigma))
-            gen_err[i] = (err1 + err2)/2 
-    return gen_err
-        
 
 def direct_ccgp_bind_est(a_pops, b_pops, accumulate_time=True, n_folds=10,
                          norm=True, pre_pca=.99, trl_ax=1, feat_ax=0,

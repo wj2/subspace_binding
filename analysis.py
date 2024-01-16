@@ -1498,38 +1498,43 @@ def shared_subspace_from_pops(p1_group, p2_group, t_ind=0, n_folds=10,
     return out_same, out_diff
 
 
-def fit_bootstrap_models(session_dict, n_boots=100, model=sklm.Ridge,
+def fit_bootstrap_models(session_dict, n_boots=500, model=sklm.Ridge,
                          fit_separately=False, **kwargs):
     out_dict = {}
     for key,  pred in session_dict.items():
         predictors, targets = pred[:2]
-        mat1 = np.zeros((n_boots, targets.shape[1], predictors.shape[1]))
-        mat2 = np.zeros((n_boots, targets.shape[1], predictors.shape[1]))
+        shape_mat = (n_boots, targets.shape[1], predictors.shape[1], targets.shape[2])
+        mat1 = np.zeros(shape_mat)
+        mat2 = np.zeros_like(mat1)
 
-        inter1 = np.zeros((n_boots, targets.shape[1], 1))
-        inter2 = np.zeros((n_boots, targets.shape[1], 1))
+        shape_inter = (n_boots, targets.shape[1], 1, targets.shape[2])
+        inter1 = np.zeros(shape_inter)
+        inter2 = np.zeros_like(inter1)
         for i in range(n_boots):
             pred1, targ1 = sku.resample(predictors, targets)
             pred2, targ2 = sku.resample(predictors, targets)
-            m1 = model()
-            m2 = model()
-            if not fit_separately:
-                m1.fit(pred1, targ1)
-                m2.fit(pred2, targ2)
-                mat1[i] = m1.coef_
-                mat2[i] = m2.coef_
-                inter1[i] = np.expand_dims(m1.intercept_, 1)
-                inter2[i] = np.expand_dims(m2.intercept_, 1)
-            else:
-                for j in range(targ1.shape[1]):
+            for j in range(targ1.shape[-1]):
+                t1_j = targ1[..., j]
+                t2_j = targ2[..., j]
+                if not fit_separately:
                     m1 = model()
                     m2 = model()
-                    m1.fit(pred1, targ1[:, j])
-                    m2.fit(pred2, targ2[:, j])
-                    mat1[i, j] = m1.coef_
-                    mat2[i, j] = m2.coef_
-                    inter1[i, j] = m1.intercept_
-                    inter2[i, j] = m2.intercept_
+                    m1.fit(pred1, t1_j)
+                    m2.fit(pred2, t2_j)
+                    mat1[i, ..., j] = m1.coef_
+                    mat2[i, ..., j] = m2.coef_
+                    inter1[i, ..., j] = np.expand_dims(m1.intercept_, 1)
+                    inter2[i, ..., j] = np.expand_dims(m2.intercept_, 1)
+                else:
+                    for k in range(targ1.shape[1]):
+                        m1 = model()
+                        m2 = model()
+                        m1.fit(pred1, t1_j[:, k])
+                        m2.fit(pred2, t2_j[:, k])
+                        mat1[i, k, ..., j] = m1.coef_
+                        mat2[i, k, ..., j] = m2.coef_
+                        inter1[i, k, ..., j] = m1.intercept_
+                        inter2[i, k, ..., j] = m2.intercept_
         out_dict[key] = ((mat1, inter1), (mat2, inter2))
     return out_dict      
 
@@ -1602,6 +1607,13 @@ def compute_corr(s1, s2, pearson_brown=None, null=False, full_data=None):
         s_comb = rng.permutation(s_comb, axis=1)
         s1 = s_comb[:, :half]
         s2 = s_comb[:, half:]
+        s1_uv = u.make_unit_vector(
+            s1[:, 0] - s1[:, -1]
+        )
+        s2_uv = u.make_unit_vector(
+            s2[:, 0] - s2[:, -1]
+        )
+        s1_uv = 0
     elif null:
         s1_uv = np.zeros((len(full_data), full_data.shape[2]))
         s2_uv = np.zeros_like(s1_uv)
@@ -1700,7 +1712,7 @@ def make_model_alternatives(
         new_kwargs = {}
         new_kwargs.update(kwargs)
         new_kwargs.update(params)
-        session_dict = make_predictor_matrices(data, **new_kwargs)
+        session_dict, _ = make_predictor_matrices(data, **new_kwargs)
         template = 'sd{}_{}'.format(add, key) + '_{}.pkl'
         num = split_and_save_subdicts(session_dict, folder, template=template,
                                       save_size=save_size)
@@ -1747,6 +1759,8 @@ def make_predictor_matrices(
         o2_on_key='Offer 2 on',
         t_beg=100,
         t_end=1000,
+        twin=None,
+        tstep=None,
         norm_targets=True,
         norm_value=True,
         include_interaction=True,
@@ -1773,6 +1787,15 @@ def make_predictor_matrices(
         all_vals = np.arange(1, n_value_bins + 1).reshape((-1, 1))
         use_val_transform = skp.StandardScaler().fit(all_vals)
     session_dicts = {}
+    if tstep is not None and twin is not None:
+        pops1, xs = data.get_populations(
+            twin, tstep, t_beg, t_end, time_zero_field=o1_on_key
+        )
+        pops2, xs = data.get_populations(
+            twin, tstep, t_beg, t_end, time_zero_field=o2_on_key
+        )
+    else:
+        xs = np.array([(t_beg + t_end) / 2])
     for i, session in data.data.iterrows():
         timing = session['psth_timing']
         animal = session['animal']
@@ -1801,15 +1824,25 @@ def make_predictor_matrices(
         p2 = np.concatenate((val2, sides2), axis=1)
         core_predictors = np.concatenate((p1, p2), axis=0)
 
-        o1_timing = session.data[o1_on_key]
-        resp1 = _get_window(session.data.psth, o1_timing, t_beg, t_end,
-                            timing)
-        o2_timing = session.data[o2_on_key]
-        resp2 = _get_window(session.data.psth, o2_timing, t_beg, t_end,
-                            timing)
+        if tstep is not None and twin is not None:
+            resp1 = pops1[i]
+            resp2 = pops2[i]
+        else:
+            o1_timing = session.data[o1_on_key]
+            resp1 = _get_window(session.data.psth, o1_timing, t_beg, t_end,
+                                timing, twin=twin, tstep=tstep)
+            resp1 = np.expand_dims(resp1, -1)
+            o2_timing = session.data[o2_on_key]
+            resp2 = _get_window(session.data.psth, o2_timing, t_beg, t_end,
+                                timing, twin=twin, tstep=tstep)
+            resp2 = np.expand_dims(resp2, -1)
         targets = np.concatenate((resp1, resp2), axis=0)
         if norm_targets:
-            targets = skp.StandardScaler().fit_transform(targets)
+            targets = np.stack(
+                list(skp.StandardScaler().fit_transform(targets[..., j])
+                     for j in range(targets.shape[-1])),
+                axis=-1,
+            )
 
         predictors = form_predictors(
             core_predictors,
@@ -1842,7 +1875,7 @@ def make_predictor_matrices(
         if return_core_predictors:
             add = add + (core_predictors,)
         session_dicts[(region, animal, date)] = add        
-    return session_dicts
+    return session_dicts, xs
 
 
 def form_predictors(
@@ -1877,6 +1910,7 @@ def form_predictors(
                                     axis=1)
     return predictors
 
+
 def split_and_save_subdicts(session_dict, folder, template='sd_{}.pkl',
                             save_size=1):
     items = list(session_dict.items())
@@ -1888,14 +1922,15 @@ def split_and_save_subdicts(session_dict, folder, template='sd_{}.pkl',
         pickle.dump(sub_dict, open(full_path, 'wb'))
     return i 
 
-def _get_window(psth, tz, beg, end, times):
+
+def _get_window(psth, tz, beg, end, times, twin=None, tstep=None):
     ct = np.expand_dims(times, 0) - np.expand_dims(tz, 1)
     mask = np.logical_and(ct >= beg, ct < end)
     psth_arr = np.stack(psth, axis=0)
     psth_arr = np.swapaxes(psth_arr, 1, 2)
-    psth_masked = np.stack(list(psth_arr[i, mask_i]
-                                for i, mask_i in enumerate(mask)),
-                           axis=0)
+    psth_masked = np.stack(list(
+        psth_arr[i][mask_i] for i, mask_i in enumerate(mask)
+    ), axis=0)
     counts = np.sum(psth_masked, axis=1)
     return counts
 
@@ -1924,9 +1959,15 @@ def _get_stim_reps(mat, inter, pred_func, val_ext=(-1.5, 1.5), n_pts=100,
             pred2 = np.concatenate((np.zeros_like(pred2), pred2), axis=-1)
 
     mat_use = np.expand_dims(mat, 2)
+    if len(pred1.shape) < len(mat_use.shape):
+        pred1 = np.expand_dims(pred1, -1)
+        pred2 = np.expand_dims(pred2, -1)
+        ax = -2
+    else:
+        ax = -1
 
-    stim1 = np.swapaxes(np.sum(mat_use*pred1, axis=-1) + inter, 1, 2)
-    stim2 = np.swapaxes(np.sum(mat_use*pred2, axis=-1) + inter, 1, 2)
+    stim1 = np.swapaxes(np.sum(mat_use*pred1, axis=ax) + inter, 1, 2)
+    stim2 = np.swapaxes(np.sum(mat_use*pred2, axis=ax) + inter, 1, 2)
     if link_function is not None:
         stim1 = link_function(stim1)
         stim2 = link_function(stim2)
@@ -2084,23 +2125,22 @@ def sample_fit_reps(
         use_regions = ('OFC', 'PCC', 'pgACC', 'VS', 'vmPFC')
     if use_monkeys is None:
         use_monkeys = ('Batman', 'Calvin', 'Hobbes', 'Pumbaa', 'Spock', 'Vader')
-    print(fit_dict.keys())
-    mat1 = np.concatenate(list(v[0][0] for (r, _, _), v in fit_dict.items()
-                               if r[0] in use_regions),
+    mat1 = np.concatenate(list(v[0][0] for (r, m, _), v in fit_dict.items()
+                               if r[0] in use_regions and m in use_monkeys),
                           axis=1)
-    inter1 = np.concatenate(list(v[0][1] for (r, _, _), v in fit_dict.items()
-                                 if r[0] in use_regions),
+    inter1 = np.concatenate(list(v[0][1] for (r, m, _), v in fit_dict.items()
+                                 if r[0] in use_regions and m in use_monkeys),
                             axis=1)
-    mat2 = np.concatenate(list(v[1][0] for (r, _, _), v in fit_dict.items()
-                               if r[0] in use_regions),
+    mat2 = np.concatenate(list(v[1][0] for (r, m, _), v in fit_dict.items()
+                               if r[0] in use_regions and m in use_monkeys),
                           axis=1)
-    inter2 = np.concatenate(list(v[1][1] for (r, _, _), v in fit_dict.items()
-                                 if r[0] in use_regions),
+    inter2 = np.concatenate(list(v[1][1] for (r, m, _), v in fit_dict.items()
+                                 if r[0] in use_regions and m in use_monkeys),
                             axis=1)
     k_list = list(
         list(zip((k[2],)*len(k[0]), range(len(k[0]))))
         for k in fit_dict.keys()
-        if k[0][0] in use_regions
+        if k[0][0] in use_regions and k[1] in use_monkeys
     )
     key_group = np.concatenate(k_list, axis=0)
 
@@ -2126,11 +2166,15 @@ def sample_all_data(
         use_regions=None,
         n_samples=100,
         n_trls=5,
+        use_monkeys=None,
 ):
     if use_regions is None:
         use_regions = ('OFC', 'PCC', 'pgACC', 'VS', 'vmPFC')
-    dat = list(v[1:] for (r, _, _), v in data_dict.items()
-               if r[0] in use_regions)
+    if use_monkeys is None:
+        use_monkeys = ('Batman', 'Calvin', 'Hobbes', 'Pumbaa', 'Spock', 'Vader')
+
+    dat = list(v[1:] for (r, m, _), v in data_dict.items()
+               if r[0] in use_regions and m in use_monkeys)
     data_ja = na.JaggedArray(*dat)
     cond_arrs = data_ja.split_on_element(1, require_trials=n_trls)
     samps = {
@@ -2154,12 +2198,14 @@ def compute_split_halfs_model_mix(
         pearson_brown=False,
         full_data=None,
         n_full_data_trials=5,
+        compute_null=True,
+        model_combination="weighted_sum",
         **kwargs,
 ):
     keys = list(model_dict.keys())
     stim11_samps, stim12_samps, stim21_samps, stim22_samps = [], [], [], []
     for ms in keys:
-        fit_dict = model_dict[ms]
+        fit_dict = model_dict[ms][0]
         pred_func = pred_dict[ms]
         out = sample_fit_reps(
             fit_dict, pred_func, *args, **kwargs
@@ -2169,15 +2215,18 @@ def compute_split_halfs_model_mix(
         stim12_samps.append(stim12)
         stim21_samps.append(stim21)
         stim22_samps.append(stim22)
+        print(stim11.shape)
     shape = stim11.shape
     stim11_samps.append(np.zeros(shape))
     stim12_samps.append(np.zeros(shape))
     stim21_samps.append(np.zeros(shape))
     stim22_samps.append(np.zeros(shape))
-    if full_data is not None:
+    if full_data is not None and compute_null:
         full_reps = sample_all_data(
             full_data, n_trls=n_full_data_trials, **kwargs,
         )
+    else:
+        full_reps = None
     stim11_samps = np.stack(stim11_samps, axis=0)
     stim12_samps = np.stack(stim12_samps, axis=0)
     stim21_samps = np.stack(stim21_samps, axis=0)
@@ -2191,21 +2240,27 @@ def compute_split_halfs_model_mix(
     for i, (kg_str, ind) in enumerate(key_group):
         region, monkey = kg_str.split("-")[:2]
         new_key = (region, monkey, kg_str, int(ind))
-        mf_kg = model_fit_dict.get(new_key)
-        weights = mf_kg["weight"]
-        simplex = {
-            k: np.sum(list(weights[sm] for sm in v))
-            for k, v in key_mask.items()
-        }
-        ms_weights = list(simplex[k] for k in fk)
-        ms_weights = np.expand_dims(ms_weights, (1, 2))
-        stim11[..., i] = np.sum(ms_weights * stim11_samps[..., i], axis=0)
-        stim12[..., i] = np.sum(ms_weights * stim12_samps[..., i], axis=0)
-        stim21[..., i] = np.sum(ms_weights * stim21_samps[..., i], axis=0)
-        stim22[..., i] = np.sum(ms_weights * stim22_samps[..., i], axis=0)
+        if model_combination in fk:
+            ind = fk.index(model_combination)
+            stim11[..., i, :] = stim11_samps[ind, ..., i, :]
+            stim12[..., i, :] = stim12_samps[ind, ..., i, :]
+            stim21[..., i, :] = stim21_samps[ind, ..., i, :]
+            stim22[..., i, :] = stim22_samps[ind, ..., i, :]
+        else:
+            mf_kg = model_fit_dict.get(new_key)
+            weights = mf_kg["weight"]
+            simplex = {
+                k: np.sum(list(weights[sm] for sm in v))
+                for k, v in key_mask.items()
+            }
+            ms_weights = list(simplex[k] for k in fk)
+            ms_weights = np.expand_dims(ms_weights, (1, 2, 3))
+            stim11[..., i, :] = np.sum(ms_weights * stim11_samps[..., i, :], axis=0)
+            stim12[..., i, :] = np.sum(ms_weights * stim12_samps[..., i, :], axis=0)
+            stim21[..., i, :] = np.sum(ms_weights * stim21_samps[..., i, :], axis=0)
+            stim22[..., i, :] = np.sum(ms_weights * stim22_samps[..., i, :], axis=0)
         
     rs_wi = align_func(stim11, stim12)
-
     rs_null = align_func(stim11, stim12, null=True, full_data=full_reps)
     
     rs_ac1 = align_func(stim11, stim21)
