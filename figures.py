@@ -893,6 +893,7 @@ class DecodingFigure(MultipleRepFigure):
             decs = self.data.get(dec_key)
         if use_regions is None:
             use_regions = self.params.getlist("use_regions")
+        time_acc = self.params.getboolean("time_accumulate")
         model_dict = {}
         for region, dec_results in decs.items():
             if region in use_regions:
@@ -901,7 +902,11 @@ class DecodingFigure(MultipleRepFigure):
                     _, _, p1, p2, p3, p4, _ = out
                     if p1.shape[1] > 0:
                         out = mrdt.direct_ccgp_bind_est_pops(
-                            (p1, p2), (p3, p4), test_prop=0, empirical=False
+                            (p1, p2),
+                            (p3, p4),
+                            test_prop=0,
+                            empirical=False,
+                            time_accumulate=time_acc,
                         )
                         out_dict = {
                             "pred_ccgp": 1 - out[1],

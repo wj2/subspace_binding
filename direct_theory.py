@@ -139,6 +139,8 @@ def _rsa_theory(a_pops, b_pops, **kwargs):
     d_lins, d_nls, sigmas, sems, n_neurs = out
 
     sem_nl = np.sqrt(2*d_nls**2 + sems**2)
+    print(d_lins.shape, d_nls.shape)
+    # THIS SEEMS WRONG, probably should be [:, 0]
     pred_ccgp = _compute_ccgp(d_lins[0, 0], d_lins[0, 0], sem_nl,
                               sigmas)
     pred_bind = _compute_bind(np.sqrt(2)*d_nls, sigmas)
