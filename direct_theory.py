@@ -139,8 +139,6 @@ def _rsa_theory(a_pops, b_pops, **kwargs):
     d_lins, d_nls, sigmas, sems, n_neurs = out
 
     sem_nl = np.sqrt(2*d_nls**2 + sems**2)
-    print(d_lins.shape, d_nls.shape)
-    # THIS SEEMS WRONG, probably should be [:, 0]
     pred_ccgp = _compute_ccgp(d_lins[0, 0], d_lins[0, 0], sem_nl,
                               sigmas)
     pred_bind = _compute_bind(np.sqrt(2)*d_nls, sigmas)
@@ -210,11 +208,11 @@ def direct_ccgp_bind_est_pops_tc(
                                          for i in range(5))
     for i in range(n_pops):
         for j in range(n_tc):
-            tr_ps = list(tp[i, ..., j] for tp in train_pops)
-            te_ps = list(tp[i, ..., j] for tp in test_pops)
+            tr_ps = list(tp[i, ..., j:j+1] for tp in train_pops)
+            te_ps = list(tp[i, ..., j:j+1] for tp in test_pops)
             out = _rsa_theory(tr_ps, te_ps)
-            gen_ests[i, j], bind_ests[i, j] = out[0]
-            d_l[i, j], d_n[i, j], sigma[i, j], sem[i, j], n_neurs[i, j] = out[1]
+            gen_ests[i, j], bind_ests[i, j] = out[:2]
+            d_l[i, j], d_n[i, j], sigma[i, j], sem[i, j], n_neurs[i, j] = out[2]
     return bind_ests, gen_ests, (d_l, d_n, sigma, sem, n_neurs)    
 
 
