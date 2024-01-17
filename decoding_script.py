@@ -30,7 +30,7 @@ def create_parser():
     )
     parser.add_argument("--subsample_neurons", default=None, type=int)
     parser.add_argument("--pca_pre", default=.99, type=float)
-    parser.add_argument("--resamples", default=200, type=float)
+    parser.add_argument("--resamples", default=200, type=int)
     parser.add_argument("--exclude_middle_percentiles", default=20, type=float)
     parser.add_argument("--min_trials", default=160, type=int)
     parser.add_argument("--dec_less", default=True, type=bool)

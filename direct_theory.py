@@ -200,7 +200,7 @@ def direct_ccgp_bind_est_pops(
 
 
 def direct_ccgp_bind_est_pops_tc(
-        train_pops, test_pops, n_folds=5, test_pop=.1, **kwargs
+        train_pops, test_pops, n_folds=5, test_prop=.1, **kwargs
 ):
     n_pops = len(train_pops[0])
     n_tc = train_pops[0][0].shape[-1]
