@@ -888,12 +888,13 @@ class DecodingFigure(MultipleRepFigure):
                 predictions[region][contrast] = ret_dict
         return predictions
 
-    def _direct_predictions(self, dec_key, decs=None, use_regions=None):
+    def _direct_predictions(self, dec_key, decs=None, use_regions=None, time_acc=None):
         if decs is None:
             decs = self.data.get(dec_key)
         if use_regions is None:
             use_regions = self.params.getlist("use_regions")
-        time_acc = self.params.getboolean("time_accumulate")
+        if time_acc is None:
+            time_acc = self.params.getboolean("time_accumulate")
         model_dict = {}
         for region, dec_results in decs.items():
             if region in use_regions:

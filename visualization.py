@@ -325,6 +325,22 @@ def visualize_model_weights(comp_dict, use_regions=None,
                                  plot_outline=True, **kwargs)
     return w_arr
     
+
+def plot_dec_dict(dec_dict, color_dict=None, axs=None, fwid=3):
+    n_plots = len(list(dec_dict.values())[0])
+    if color_dict is None:
+        color_dict = {}
+    if axs is None:
+        f, axs = plt.subplots(n_plots, 1, figsize=(fwid, fwid*n_plots))
+    for r, cond_dict in dec_dict.items():
+        for i, (cond, res) in enumerate(cond_dict.items()):
+            dec, xs = res[:2]
+            gpl.plot_trace_werr(
+                xs, np.mean(dec, axis=1), ax=axs[i], color=color_dict.get(r),
+            )
+    return axs
+
+
 def plot_stan_corr(fit_dict, pred_func, ax=None, align_func=mra.compute_corr,
                    **kwargs):
     mat, inter = mraux.make_fit_matrix(fit_dict)

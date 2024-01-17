@@ -105,7 +105,10 @@ if __name__ == '__main__':
         decoding_results[region] = out
 
     pred_results = dec_fig._direct_predictions(
-        "dec", decs=decoding_results, use_regions=args.regions
+        "dec",
+        decs=decoding_results,
+        use_regions=args.regions,
+        time_acc=args.time_accumulate,
     )
 
     decoding_results = mraux.remove_pops(decoding_results)

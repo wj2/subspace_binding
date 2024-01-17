@@ -117,9 +117,9 @@ def _compute_bind(d_n, sigma, k=2, n=2, n_stim=2):
 def rsa_preproc(a_pops, b_pops, norm=True, pre_pca=.99, trl_ax=1, feat_ax=0,
                 accumulate_time=True, ret_out_pops=False):
     if accumulate_time:
-        a_pops = list(np.squeeze(_accumulate_time(tp, ax=0))
+        a_pops = list(np.squeeze(_accumulate_time(tp, ax=feat_ax))
                       for tp in a_pops)
-        b_pops = list(np.squeeze(_accumulate_time(tp, ax=0))
+        b_pops = list(np.squeeze(_accumulate_time(tp, ax=feat_ax))
                       for tp in b_pops)
 
     out = _preprocess(*(a_pops + b_pops), norm=norm, pre_pca=pre_pca,
@@ -189,7 +189,36 @@ def combined_ccgp_bind_est(train_pops, test_pops, use_rsa=True, schema=None, **k
     return pred_ccgp, pred_bind, (d_lins[:, 0], d_nls, sigmas, sems)
 
 
-def direct_ccgp_bind_est_pops(train_pops, test_pops, n_folds=5, test_prop=.1,
+def direct_ccgp_bind_est_pops(
+        *args, time_accumulate=True, **kwargs,
+):
+    if time_accumulate:
+        out = direct_ccgp_bind_est_pops_cv(*args, **kwargs)
+    else:
+        out = direct_ccgp_bind_est_pops_tc(*args, **kwargs)
+    return out
+
+
+def direct_ccgp_bind_est_pops_tc(
+        train_pops, test_pops, n_folds=5, test_pop=.1, **kwargs
+):
+    n_pops = len(train_pops[0])
+    n_tc = train_pops[0][0].shape[-1]
+    bind_ests = np.zeros((n_pops, n_tc))
+    gen_ests = np.zeros_like(bind_ests)
+    d_l, d_n, sigma, sem, n_neurs = list(np.zeros_like(bind_ests)
+                                         for i in range(5))
+    for i in range(n_pops):
+        for j in range(n_tc):
+            tr_ps = list(tp[i, ..., j] for tp in train_pops)
+            te_ps = list(tp[i, ..., j] for tp in test_pops)
+            out = _rsa_theory(tr_ps, te_ps, **kwargs)
+            gen_ests[i, j], bind_ests[i, j] = out[0]
+            d_l[i, j], d_n[i, j], sigma[i, j], sem[i, j], n_neurs[i, j] = out[1]
+    return bind_ests, gen_ests, (d_l, d_n, sigma, sem, n_neurs)    
+
+
+def direct_ccgp_bind_est_pops_cv(train_pops, test_pops, n_folds=5, test_prop=.1,
                               **kwargs):
     n_pops = len(train_pops[0])
     bind_ests = np.zeros((n_pops, n_folds))
@@ -199,7 +228,7 @@ def direct_ccgp_bind_est_pops(train_pops, test_pops, n_folds=5, test_prop=.1,
     for i in range(n_pops):
         tr_ps = list(tp[i] for tp in train_pops)
         te_ps = list(tp[i] for tp in test_pops)
-        out = _rsa_theory(tr_ps, te_ps)
+        out = _rsa_theory(tr_ps, te_ps, **kwargs)
         gen_ests[i], bind_ests[i], (d_l[i], d_n[i], sigma[i], sem[i], n_neurs[i]) = out
     return bind_ests, gen_ests, (d_l, d_n, sigma, sem, n_neurs)
 

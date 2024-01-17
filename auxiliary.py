@@ -9,6 +9,8 @@ import pickle
 import arviz as az
 # from one.api import One
 
+import general.utility as u
+
 bhv_fields_rename = {'trials.included':'include',
                      'trials.visualStim_contrastLeft':'contrastLeft',
                      'trials.visualStim_contrastRight':'contrastRight',
@@ -27,6 +29,21 @@ region_monkey_dict = {
     "vmPFC": ('Batman', 'Hobbes'),
     "all": ('Batman', 'Calvin', 'Hobbes', 'Pumbaa', 'Spock', 'Vader')
 }
+
+
+def load_decoding_runs(
+        runind,
+        folder="multiple_representations/decoding_cluster/",
+        template="decoding_[A-Za-z]+_{runind}\.pkl",
+):
+    pattern = template.format(runind=runind)
+    dec_dict = {}
+    pred_dict = {}
+    for _, _, data in u.load_folder_regex_generator(folder, pattern):
+        dec_dict.update(data["decoding"])
+        pred_dict.update(data["predictions"])
+    return dec_dict, pred_dict
+
 
 def remove_pops(dec_dict):
     new_dict = {}
