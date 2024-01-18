@@ -31,7 +31,7 @@ def create_parser():
     parser.add_argument("--subsample_neurons", default=None, type=int)
     parser.add_argument("--pca_pre", default=.99, type=float)
     parser.add_argument("--resamples", default=200, type=int)
-    parser.add_argument("--exclude_middle_percentiles", default=20, type=float)
+    parser.add_argument("--exclude_middle_percentiles", default=15, type=float)
     parser.add_argument("--min_trials", default=160, type=int)
     parser.add_argument("--dec_less", default=True, type=bool)
     parser.add_argument("--tbeg", default=100, type=float)
@@ -76,16 +76,19 @@ if __name__ == '__main__':
         def mask_func(x): return x <= 1
 
     decoding_results = {}
+    timing_results = {}
     for region in regions:        
         if region == "all":
             use_regions = None
         else:
             use_regions = (region,)
-        out = mra.compute_all_generalizations(
+        func_args = (
             exper_data,
             args.tbeg,
             args.tend,
             data_field,
+        )
+        func_kwargs = dict(
             winsize=args.winsize,
             pre_pca=args.pca_pre,
             pop_resamples=args.resamples,
@@ -100,9 +103,15 @@ if __name__ == '__main__':
             min_trials=min_trials,
             dec_less=dec_less,
             use_split_dec=args.use_split_dec,
-            use_time=args.use_time,
+            use_time=args.use_time,            
+        )
+        out = mra.compute_all_generalizations(
+            *func_args, **func_kwargs,
         )
         decoding_results[region] = out
+        
+        out = mra.compute_time_dec(*func_args, **func_kwargs)
+        timing_results[region] = out
 
     pred_results = dec_fig._direct_predictions(
         "dec",
@@ -116,6 +125,7 @@ if __name__ == '__main__':
         "args": vars(args),
         "decoding": decoding_results,
         "predictions": pred_results,
+        "timing": timing_results,
     }
     r_str = "-".join(regions)
     file = args.output_template.format(

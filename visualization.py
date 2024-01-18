@@ -326,18 +326,95 @@ def visualize_model_weights(comp_dict, use_regions=None,
     return w_arr
     
 
-def plot_dec_dict(dec_dict, color_dict=None, axs=None, fwid=3):
-    n_plots = len(list(dec_dict.values())[0])
+def plot_dist_dict(
+        dist_dict,
+        color_dict=None,
+        axs=None,
+        fwid=3,
+        pks=("d_l", "d_n"),
+        plot_cond=('subj_ev_left', 'subj_ev_right'),
+        xs_dict=None,
+):
+    n_plots = len(dist_dict)
     if color_dict is None:
         color_dict = {}
     if axs is None:
         f, axs = plt.subplots(n_plots, 1, figsize=(fwid, fwid*n_plots))
-    for r, cond_dict in dec_dict.items():
-        for i, (cond, res) in enumerate(cond_dict.items()):
-            dec, xs = res[:2]
+    for i, (r, cond_dict) in enumerate(dist_dict.items()):
+        for pk in pks:
+            pk_fits = cond_dict[plot_cond][pk]
+            if xs_dict is not None:
+                xs = xs_dict[r][plot_cond][1]
+            else:
+                xs = np.arange(pk_fits.shape[-1])
             gpl.plot_trace_werr(
-                xs, np.mean(dec, axis=1), ax=axs[i], color=color_dict.get(r),
+                xs, pk_fits, conf95=True, color=color_dict.get(pk), ax=axs[i]
             )
+        axs[i].set_title(r)
+    
+
+
+dec_cond_groups = {
+    "side": (
+        ('subj_ev_left', 'subj_ev_right'), ('subj_ev_right', 'subj_ev_left')
+    ),
+    "time": (
+        ('subj_ev offer 1', 'subj_ev offer 2'), ('subj_ev offer 2', 'subj_ev offer 1')
+    ),
+}
+def plot_dec_dict(
+        dec_dict,
+        color_dict=None,
+        axs=None,
+        fwid=3,
+        plot_gen=False,
+        cond_groups=dec_cond_groups,
+):
+    n_plots = len(cond_groups)
+    n_regions = len(dec_dict)
+    if color_dict is None:
+        color_dict = {}
+    if axs is None:
+        f, axs = plt.subplots(
+            n_plots,
+            n_regions,
+            figsize=(fwid*n_regions, fwid*n_plots),
+            sharex=True,
+            sharey=True,
+        )
+    for j, (r, cond_dict) in enumerate(dec_dict.items()):
+        for i, (cond, ks) in enumerate(cond_groups.items()):
+            decs = []
+            gens = [] 
+            for k in ks:
+                res = cond_dict[k]
+                dec, xs = res[:2]
+                decs.append(dec)
+                if len(res) > 2:
+                    gen = res[-1]
+                    gens.append(gen)
+            dec = np.mean(decs, axis=(0, 2))
+            gpl.plot_trace_werr(
+                xs,
+                dec,
+                ax=axs[i, j],
+                color=color_dict.get(r),
+                conf95=True,
+            )
+            if len(gens) > 0:
+                gen = np.mean(gens, axis=(0, 2))
+                gpl.plot_trace_werr(
+                    xs,
+                    gen,
+                    ax=axs[i, j],
+                    ls="dashed",
+                    color=color_dict.get(r),
+                    conf95=True,
+                )
+            axs[i, j].set_title(r)
+            if j == 0:
+                axs[i, j].set_ylabel(cond)
+            gpl.add_hlines(0.5, axs[i, j])
     return axs
 
 

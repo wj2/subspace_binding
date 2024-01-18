@@ -2823,7 +2823,8 @@ def compute_conditional_generalization(data, tbeg, tend, dec_var,
                                           f1_tzf=dec_tzf, f2_tzf=gen_tzf,
                                           **kwargs)
             out_dict[(dec_field, gen_field, j)] = out
-    return out_dict  
+    return out_dict      
+
 
 default_suffixes = (('_chosen', '_unchosen'), ('_left', '_right'),
                     (' offer 1', ' offer 2'))
@@ -2876,8 +2877,19 @@ def compute_all_generalizations(*args, **kwargs):
                               **kwargs)
 
 def compute_all_xor(*args, **kwargs):
-    return _compute_all_fucns(*args, xor_analysis,
+    return _compute_all_funcs(*args, xor_analysis,
                               **kwargs)
+
+def compute_time_dec(*args, **kwargs):
+    suffixes = ((" offer 1", " offer 2"),)
+    timing = (("Offer 2 on", "Offer 2 on"),)
+    return _compute_all_funcs(
+        *args,
+        generalization_analysis,
+        timing=timing,
+        suffixes=suffixes,
+        **kwargs,
+    )
                                 
 
 def _combine_pops(*args):
