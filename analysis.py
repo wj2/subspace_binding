@@ -2839,7 +2839,8 @@ default_timing = (('offer_left_on', 'offer_right_on'),
 def _compute_all_funcs(data, tbeg, tend, dec_var, func,
                        suffixes=default_suffixes,
                        timing=default_timing, mask_func=None,
-                       compute_reverse=True, mask_var=None, **kwargs):
+                       compute_reverse=True, mask_var=None,
+                       tzf_key=False, **kwargs):
     out_dict = {}
     for i, (dec_suff, gen_suff) in enumerate(suffixes):
         dec_field = dec_var + dec_suff
@@ -2860,12 +2861,20 @@ def _compute_all_funcs(data, tbeg, tend, dec_var, func,
         out = func(data, tbeg, tend, dec_field, gen_field,
                    f1_mask=dec_mask, f2_mask=gen_mask,
                    f1_tzf=dec_tzf, f2_tzf=gen_tzf, **kwargs)
-        out_dict[(dec_field, gen_field)] = out
+        if tzf_key:
+            key = ((dec_field, dec_tzf), (gen_field, gen_tzf))
+        else:
+            key = (dec_field, gen_field)
+        out_dict[key] = out
         if compute_reverse:
             out = func(data, tbeg, tend, gen_field, dec_field,
                        f1_mask=gen_mask, f2_mask=dec_mask,
                        f1_tzf=gen_tzf, f2_tzf=dec_tzf, **kwargs)
-            out_dict[(gen_field, dec_field)] = out
+            if tzf_key:
+                key = ((gen_field, gen_tzf), (dec_field, dec_tzf))
+            else:
+                key = (gen_field, dec_field)
+            out_dict[key] = out
     return out_dict  
 
 def compute_all_binding(*args, **kwargs):
@@ -2881,13 +2890,20 @@ def compute_all_xor(*args, **kwargs):
                               **kwargs)
 
 def compute_time_dec(*args, **kwargs):
-    suffixes = ((" offer 1", " offer 2"),)
-    timing = (("Offer 2 on", "Offer 2 on"),)
+    suffixes = (
+        (" offer 1", " offer 2"),
+        (" offer 1", " offer 1"),
+    )
+    timing = (
+        ("Offer 2 on", "Offer 2 on"),
+        ("Offer 1 on", "Offer 2 on"),
+    )
     return _compute_all_funcs(
         *args,
         generalization_analysis,
         timing=timing,
         suffixes=suffixes,
+        tzf_key=True,
         **kwargs,
     )
                                 
