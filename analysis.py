@@ -2909,7 +2909,25 @@ def compute_time_dec(*args, **kwargs):
         tzf_key=True,
         **kwargs,
     )
-                                
+
+
+def compute_timewindow_dec(
+        *args, winsize=500, offset=0, dec_pt=None, tstep=20, **kwargs
+):
+    if dec_pt is None:
+        dec_pt = offset + winsize / 2
+    beg_pt = dec_pt - (winsize + tstep) / 2
+    end_pt = dec_pt + (winsize + tstep) / 2
+    return compute_time_dec(
+        *args,
+        dec_beg=beg_pt,
+        dec_end=end_pt,
+        winsize=winsize,
+        tstep=tstep,
+        collapse_time=True,
+        **kwargs,
+    )
+
 
 def _combine_pops(*args):
     n_pops = len(args[0])

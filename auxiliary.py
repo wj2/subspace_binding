@@ -37,12 +37,11 @@ def load_decoding_runs(
         template="decoding_[A-Za-z]+_{runind}\.pkl",
 ):
     pattern = template.format(runind=runind)
-    dec_dict = {}
-    pred_dict = {}
-    for _, _, data in u.load_folder_regex_generator(folder, pattern):
-        dec_dict.update(data["decoding"])
-        pred_dict.update(data["predictions"])
-    return dec_dict, pred_dict
+    for i, (_, _, data) in enumerate(u.load_folder_regex_generator(folder, pattern)):
+        if i == 0:
+            comb_dict = {k: {} for k in data.keys()}
+        list(comb_dict[k].update(v) for k, v in data.items())
+    return comb_dict
 
 
 def remove_pops(dec_dict):

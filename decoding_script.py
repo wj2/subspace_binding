@@ -77,6 +77,7 @@ if __name__ == '__main__':
 
     decoding_results = {}
     timing_results = {}
+    timing_gen_results = {}
     for region in regions:        
         if region == "all":
             use_regions = None
@@ -105,6 +106,9 @@ if __name__ == '__main__':
             use_split_dec=args.use_split_dec,
             use_time=args.use_time,            
         )
+        out = mra.compute_timewindow_dec(*func_args, **func_kwargs)
+        timing_gen_results[region] = out
+
         out = mra.compute_all_generalizations(
             *func_args, **func_kwargs,
         )
@@ -113,6 +117,7 @@ if __name__ == '__main__':
         out = mra.compute_time_dec(*func_args, **func_kwargs)
         timing_results[region] = out
 
+
     pred_results = dec_fig._direct_predictions(
         "dec",
         decs=decoding_results,
@@ -120,14 +125,24 @@ if __name__ == '__main__':
         time_acc=args.time_accumulate,
     )
 
+    pred_time_results = dec_fig._direct_predictions(
+        "dec",
+        decs=timing_results,
+        use_regions=args.regions,
+        time_acc=args.time_accumulate,        
+    )
+
     decoding_results = mraux.remove_pops(decoding_results)
     timing_results = mraux.remove_pops(timing_results)
+    timing_gen_results = mraux.remove_pops(timing_gen_results)
     
     save_dict = {
         "args": vars(args),
         "decoding": decoding_results,
         "predictions": pred_results,
         "timing": timing_results,
+        "predictions_timing": pred_time_results,
+        "timing_gen": timing_gen_results,
     }
     r_str = "-".join(regions)
     file = args.output_template.format(

@@ -604,13 +604,13 @@ class SelectivityFigure(MultipleRepFigure):
         tstep = self.params.getint("tc_winstep")
         
         if self.data.get(key_gen) is None or recompute:
-            ms_dict, xs = self.fit_subspace_models(tc_start, tc_end, tstep, twin)
-            ms_shuff, xs = self.fit_subspace_models(
+            ms_dict = self.fit_subspace_models(tc_start, tc_end, tstep, twin)
+            ms_shuff = self.fit_subspace_models(
                 tc_start, tc_end, tstep, twin, shuffle_targs=True,
             )
             
-            self.data[key_gen] = (ms_dict, ms_shuff, xs)
-        ms_dict, ms_shuff, xs = self.data[key_gen]
+            self.data[key_gen] = (ms_dict, ms_shuff)
+        ms_dict, ms_shuff = self.data[key_gen]
         if self.data.get(key_spec) is None or recompute:
             r_dict = {}
             r_shuff = {}
@@ -623,7 +623,7 @@ class SelectivityFigure(MultipleRepFigure):
                 r_shuff[r]["full"] = self.compute_subspace_corr(
                     ms_shuff, r, None, model_combination="interaction",
                 )
-            self.data[key_spec] = r_dict, r_shuff, xs
+            self.data[key_spec] = r_dict, r_shuff
         r_dict, r_shuff, xs = self.data[key_spec]
 
         self.plot_subspace_corr(ax, r_dict)

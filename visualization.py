@@ -366,7 +366,7 @@ def plot_dec_dict(
         dec_dict,
         color_dict=None,
         axs=None,
-        fwid=3,
+        fwid=1,
         plot_gen=False,
         cond_groups=dec_cond_groups,
 ):
@@ -416,6 +416,92 @@ def plot_dec_dict(
                 axs[i, j].set_ylabel(cond)
             gpl.add_hlines(0.5, axs[i, j])
     return axs
+
+
+def plot_current_past_dict(
+        dec_run_dict,
+        color_dict=None,
+        axs=None,
+        fwid=2,
+        plot_gen=False,
+        plot_regions=None,
+):
+    n_plots = 2
+    n_regions = 2
+    dec_dict = dec_run_dict["decoding"]
+    timing_dict = dec_run_dict["timing"]
+    if color_dict is None:
+        color_dict = {}
+    if axs is None:
+        f, axs = plt.subplots(
+            n_regions,
+            n_plots,
+            figsize=(fwid*n_regions, fwid*n_plots),
+            sharex=True,
+            sharey=True,
+        )
+    if plot_regions is None:
+        plot_regions = dec_dict.keys()
+        
+    o1_to_o2_key = ('subj_ev offer 1', 'subj_ev offer 2')
+    o2_to_o1_key = ('subj_ev offer 2', 'subj_ev offer 1')
+    
+    o1_time_o2o1_key = (('subj_ev offer 1', 'Offer 2 on'),
+                        ('subj_ev offer 1', 'Offer 1 on'))
+    for i, region in enumerate(plot_regions):
+        dec, xs, gen = dec_dict[region][o1_to_o2_key]
+        gpl.plot_trace_werr(
+            xs,
+            np.mean(dec, axis=1),
+            color=color_dict.get(region),
+            ax=axs[0, 0],
+            conf95=True,
+        )
+        gpl.plot_trace_werr(
+            xs,
+            np.mean(gen, axis=1),
+            color=color_dict.get(region),
+            ax=axs[0, 1],
+            ls="dashed",
+            conf95=True,
+        )
+        dec, xs, gen = dec_dict[region][o2_to_o1_key]
+        gpl.plot_trace_werr(
+            xs,
+            np.mean(dec, axis=1),
+            color=color_dict.get(region),
+            ax=axs[0, 1],
+            conf95=True,
+        )
+        gpl.plot_trace_werr(
+            xs,
+            np.mean(gen, axis=1),
+            color=color_dict.get(region),
+            ax=axs[0, 0],
+            ls="dashed",
+            conf95=True,
+        )
+
+        dec, xs, gen = timing_dict[region][o1_time_o2o1_key]
+        gpl.plot_trace_werr(
+            xs,
+            np.mean(dec, axis=1),
+            color=color_dict.get(region),
+            ax=axs[1, 1],
+            conf95=True,
+        )
+        gpl.plot_trace_werr(
+            xs,
+            np.mean(gen, axis=1),
+            color=color_dict.get(region),
+            ax=axs[1, 0],
+            ls="dashed",
+            conf95=True,
+        )
+        for i, j in u.make_array_ind_iterator(axs.shape):
+            gpl.add_hlines(.5, axs[i, j])
+            gpl.clean_plot(axs[i, j], j)
+
 
 region_list = ('OFC', 'PCC', 'pgACC', 'VS', 'vmPFC')
 def print_all_region_stats(data, region_list=region_list, **kwargs):
