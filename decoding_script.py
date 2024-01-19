@@ -121,6 +121,8 @@ if __name__ == '__main__':
     )
 
     decoding_results = mraux.remove_pops(decoding_results)
+    timing_results = mraux.remove_pops(timing_results)
+    
     save_dict = {
         "args": vars(args),
         "decoding": decoding_results,

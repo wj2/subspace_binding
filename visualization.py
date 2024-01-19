@@ -417,6 +417,35 @@ def plot_dec_dict(
             gpl.add_hlines(0.5, axs[i, j])
     return axs
 
+region_list = ('OFC', 'PCC', 'pgACC', 'VS', 'vmPFC')
+def print_all_region_stats(data, region_list=region_list, **kwargs):
+    print_data_stats(data, **kwargs)
+    for r in region_list:
+        print("--------- {} ---------".format(r))
+        print_data_stats(data, region=r, **kwargs)
+
+def print_data_stats(data, neur_thr=5, region=None):
+    if region is not None:
+        mask = np.array(list(
+            region in np.unique(np.concatenate(r))
+            for r in data["neur_regions"]
+        ))
+        data = data.session_mask(mask)
+    n_sessions = len(data.data)
+    n_neur_list = data["n_neurs"].to_numpy()
+    n_neurons = np.sum(n_neur_list)
+    print("total sessions: {}".format(n_sessions))
+    print("median number of neurons: {} ({} - {})".format(
+        np.median(n_neur_list), np.min(n_neur_list), np.max(n_neur_list)
+    ))
+    print("sessions with fewer than {} neurons: {}/{} (for {}/{} total neurons)".format(
+        neur_thr,
+        np.sum(n_neur_list < neur_thr),
+        n_sessions,
+        np.sum(n_neur_list[n_neur_list < neur_thr]),
+        n_neurons,
+    ))
+    
 
 def plot_stan_corr(fit_dict, pred_func, ax=None, align_func=mra.compute_corr,
                    **kwargs):
@@ -447,7 +476,7 @@ def plot_stan_fits(fit_dict, pred_func, plot_points=True, ms=.1, ax=None,
     mat, inter = mraux.make_fit_matrix(fit_dict)
 
     stim1, stim2 = mra._get_stim_reps(mat, inter, pred_func, **kwargs)
-    ax = gpl.plot_highdim_trace(stim1, stim2, plot_points=lot_points,
+    ax = gpl.plot_highdim_trace(stim1, stim2, plot_points=plot_points,
                                 ms=ms, ax=ax)
     return ax
 
