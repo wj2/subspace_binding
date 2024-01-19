@@ -1613,7 +1613,6 @@ def compute_corr(s1, s2, pearson_brown=None, null=False, full_data=None):
         s2_uv = u.make_unit_vector(
             s2[:, 0] - s2[:, -1]
         )
-        s1_uv = 0
     elif null:
         s1_uv = np.zeros((len(full_data), full_data.shape[2]))
         s2_uv = np.zeros_like(s1_uv)
@@ -1762,6 +1761,7 @@ def make_predictor_matrices(
         twin=None,
         tstep=None,
         norm_targets=True,
+        shuffle_targets=False,
         norm_value=True,
         include_interaction=True,
         transform_value=False,
@@ -1788,11 +1788,11 @@ def make_predictor_matrices(
         use_val_transform = skp.StandardScaler().fit(all_vals)
     session_dicts = {}
     if tstep is not None and twin is not None:
-        pops1, xs = data.get_populations(
-            twin, tstep, t_beg, t_end, time_zero_field=o1_on_key
+        pops1, xs = data.get_neural_activity(
+            twin, t_beg, t_end, stepsize=tstep, time_zero_field=o1_on_key
         )
-        pops2, xs = data.get_populations(
-            twin, tstep, t_beg, t_end, time_zero_field=o2_on_key
+        pops2, xs = data.get_neural_activity(
+            twin, t_beg, t_end, stepsize=tstep, time_zero_field=o2_on_key
         )
     else:
         xs = np.array([(t_beg + t_end) / 2])
@@ -1871,6 +1871,9 @@ def make_predictor_matrices(
             targets = targets[::decrement]
             predictors = predictors[::decrement]
             core_predictors = core_predictors[::decrement]
+        if shuffle_targets:
+            rng = np.random.default_rng()
+            rng.shuffle(targets)
         add = (predictors, targets)
         if return_core_predictors:
             add = add + (core_predictors,)
