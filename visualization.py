@@ -416,7 +416,7 @@ def plot_dec_dict(
                 axs[i, j].set_ylabel(cond)
             gpl.add_hlines(0.5, axs[i, j])
     return axs
-
+    
 
 def plot_current_past_dict(
         dec_run_dict,

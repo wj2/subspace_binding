@@ -15,7 +15,7 @@ def create_parser():
     parser = argparse.ArgumentParser(
         description='perform decoding analyses on Fine data'
     )
-    out_template = "decoding_{regions}_{jobid}.pkl"
+    out_template = "decoding_m-{monkey}_r-{regions}_{jobid}.pkl"
     parser.add_argument('-o', '--output_template', default=out_template, type=str,
                         help='file to save the output in')
     parser.add_argument(
@@ -65,6 +65,8 @@ if __name__ == '__main__':
         targ_m = mraux.monkey_list[args.monkey_ind]
         s_mask = exper_data["animal"] == targ_m
         exper_data = exper_data.session_mask(s_mask)
+    else:
+        targ_m = "all"
     
     data_field = args.data_field
     dead_perc = args.exclude_middle_percentiles
@@ -147,6 +149,7 @@ if __name__ == '__main__':
     r_str = "-".join(regions)
     file = args.output_template.format(
         regions=r_str,
+        monkey=targ_m,
         jobid=args.jobid,
     )
     path = os.path.join(args.output_folder, file)

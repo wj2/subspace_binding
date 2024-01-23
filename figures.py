@@ -279,7 +279,7 @@ class SelectivityFigure(MultipleRepFigure):
             for i, r in enumerate(self.regions):
                 use_m = "all"
                 for j, ms_dict in enumerate(ms_list):
-                    r_dicts[j][r] = {}
+                    r_dicts[j][r] = r_dicts[j][r].get(use_m, {})
                     r_dicts[j][r][use_m] = self.compute_subspace_corr(
                         ms_dict,
                         r,
@@ -291,7 +291,9 @@ class SelectivityFigure(MultipleRepFigure):
         r_on, r_on_shuff, r_delay, r_delay_shuff = self.data[key_spec]
         markers = {}
         self.plot_subspace_corr(axs[0], r_on, style_dict=markers, shuff=r_on_shuff)
-        self.plot_subspace_corr(axs[1], r_delay, style_dict=markers, shuff=r_delay_shuff)
+        self.plot_subspace_corr(
+            axs[1], r_delay, style_dict=markers, shuff=r_delay_shuff, time="DELAY"
+        )
         if self.params.getboolean("use_nl_val"):
             y_label = "alignment index"
         else:
@@ -317,35 +319,45 @@ class SelectivityFigure(MultipleRepFigure):
             session_mask = data["n_neurs"] > min_neurs
             data_filt = data.session_mask(session_mask)
             ms_on_dict = self.fit_subspace_models(tb_on, te_on, data=data_filt)
+            ms_on_shuff = self.fit_subspace_models(
+                tb_on, te_on, data=data_filt, shuffle_targs=True
+            )
             ms_delay_dict = self.fit_subspace_models(tb_delay, te_delay, data=data_filt)
-            self.data[key_gen] = (ms_on_dict, ms_delay_dict)
-        out = self.data["subspace_corr"]
-        ms_on_dict, ms_delay_dict = out
+            ms_delay_shuff = self.fit_subspace_models(
+                tb_delay, te_delay, data=data_filt, shuffle_targs=True
+            )
+            self.data[key_gen] = (ms_on_dict, ms_on_shuff, ms_delay_dict, ms_delay_shuff)
+        ms_list = self.data["subspace_corr"]
+        use_model_comb = "interaction"
         if self.data.get(key_spec) is None or recompute:
-            r_on_dict = {}
-            r_delay_dict = {}
+            r_dicts = list({} for ms in ms_list)
             for i, r in enumerate(self.regions):
-                r_on_dict[r] = {}
-                r_delay_dict[r] = {}
                 use_m = "all"
-                r_on_dict[r][use_m] = self.compute_subspace_corr(
-                    ms_on_dict,
-                    r,
-                    use_m,
-                    model_combination="interaction",
-                )
-                r_delay_dict[r][use_m] = self.compute_subspace_corr(
-                    ms_delay_dict,
-                    r,
-                    use_m,
-                    model_combination="interaction",
-                )
-            self.data[key_spec] = (r_on_dict, r_delay_dict)
+                for j, ms_dict in enumerate(ms_list):
+                    r_dicts[j][r] = r_dicts[j].get(r, {})
+                    try:
+                        r_dicts[j][r][use_m] = self.compute_subspace_corr(
+                            ms_dict,
+                            r,
+                            use_m,
+                            model_combination=use_model_comb,
+                        )
+                    except ValueError as e:
+                        s = ("an error occurred for {} and in monkey {}, this might "
+                             "be because there are no sessions meeting the subset "
+                             "criteria")
+                        print(
+                            s.format(r, use_m)
+                        )
+                        print(e)
+            self.data[key_spec] = r_dicts
 
-        r_on, r_delay = self.data[key_spec]
+        r_on, r_on_shuff, r_delay, r_delay_shuff = self.data[key_spec]
         markers = {}
-        self.plot_subspace_corr(axs[0], r_on, style_dict=markers)
-        self.plot_subspace_corr(axs[1], r_delay, style_dict=markers)
+        self.plot_subspace_corr(axs[0], r_on, style_dict=markers, shuff=r_on_shuff)
+        self.plot_subspace_corr(
+            axs[1], r_delay, style_dict=markers, shuff=r_delay_shuff, time="DELAY"
+        )
         if self.params.getboolean("use_nl_val"):
             y_label = "alignment index"
         else:
@@ -540,7 +552,7 @@ class SelectivityFigure(MultipleRepFigure):
             r_list = None
         else:
             r_list = (region,)
-        if monkey == "all":
+        if monkey == "all" or monkey is None:
             m_list = None
         else:
             m_list = (monkey,)
@@ -559,8 +571,46 @@ class SelectivityFigure(MultipleRepFigure):
             model_combination=model_combination,
         )
         return out_on
-    
-    def plot_subspace_corr(self, ax, r_dict, style_dict=None, offset=.5, shuff=None):
+
+    def plot_subspace_corr_tc(
+            self,
+            ax,
+            r_dict,
+            xs,
+            style_dict=None,
+            color_dict=None,
+            shuff=None,
+            normalize=False,
+            x_label="time from offer onset (ms)"
+    ):
+        if style_dict is None:
+            style_dict = {}
+        if not u.check_list(ax):
+            axs = (ax,)*len(self.regions)
+        else:
+            axs = ax
+        null_color = self.params.getcolor("null_corr_color")
+        for i, r in enumerate(self.regions):
+            r_color = self.get_color_dict()[r]
+            for j, (m, (rs_wi, rs_ac, rs_null)) in enumerate(r_dict[r].items()):
+                ax = axs[i]
+                if shuff is not None:
+                    null = shuff[r][m][0]
+                else:
+                    null = np.zeros_like(rs_wi)
+                if normalize:
+                    normed = (rs_wi - null) / (rs_ac - null)
+                    gpl.plot_trace_werr(xs, normed, color=r_color, conf95=True, ax=ax)
+                else:
+                    gpl.plot_trace_werr(xs, rs_wi, color=r_color, conf95=True, ax=ax)
+                    gpl.plot_trace_werr(xs, rs_ac, color=null_color, conf95=True, ax=ax)
+                    gpl.plot_trace_werr(xs, null, color=null_color, conf95=True, ax=ax)
+                ax.set_xlabel(x_label)
+        return axs
+
+    def plot_subspace_corr(
+            self, ax, r_dict, style_dict=None, offset=.5, shuff=None, time="ON",
+    ):
         if style_dict is None:
             style_dict = {}
             
@@ -569,23 +619,34 @@ class SelectivityFigure(MultipleRepFigure):
         for i, r in enumerate(self.regions):
             r_color = self.get_color_dict()[r]
             n_items = len(r_dict[r])
-            for j, (m, (rs_wi_on, rs_ac_on, rs_null_on)) in enumerate(r_dict[r].items()):
+            for j, (m, (rs_wi, rs_ac, rs_null)) in enumerate(r_dict[r].items()):
                 if shuff is not None:
-                    rs_null_on = shuff[r][m][0]
+                    rs_null = shuff[r][m][0]
                 mrv.plot_split_halfs_only(
-                    rs_wi_on,
-                    rs_ac_on,
-                    rs_null_on,
+                    rs_wi,
+                    rs_ac,
+                    rs_null,
                     ax=ax,
                     pt=i + (j - n_items/2)*offset/n_items,
                     colors=(r_color, null1_color, null2_color),
                     **style_dict.get(m, {})
                 )
                 high, low = u.conf_interval(
-                    rs_ac_on - rs_wi_on, withmean=True, perc=90,
+                    rs_ac - rs_wi, withmean=True, perc=90,
                 )[:, 0]
-                print("{region}, {monkey}, ON: {low:.2f} to {high:.2f}".format(
-                    monkey=m, region=r, low=low, high=high,
+                s1 = ("{region}, {monkey}, {time}: {low:.2f} to {high:.2f} "
+                      "difference from ceiling")
+                print(s1.format(
+                    monkey=m, region=r, time=time, low=low, high=high,
+                ))
+                
+                high, low = u.conf_interval(
+                    rs_wi - rs_null, withmean=True, perc=90,
+                )[:, 0]
+                s = ("{region}, {monkey}, {time}: {low:.2f} to {high:.2f} "
+                     "difference from floor")
+                print(s.format(
+                    monkey=m, region=r, time=time, low=low, high=high,
                 ))
                     
         gpl.clean_plot(ax, 0)
@@ -594,10 +655,17 @@ class SelectivityFigure(MultipleRepFigure):
         ax.set_xticklabels(self.regions)
         ax.set_ylabel("subspace correlation")
 
-    def panel_subspace_corr_tc(self, recompute=False):
+    def panel_subspace_corr_tc(self, recompute=False, new_axes=True, fwid=2):
         key_gen = "subspace_corr_tc_models"
         key_spec = "subspace_corr_tc"
-        ax = self.gss["subspace_corr"]
+        key_ax = "subspace_corr"
+        if new_axes:
+            n_panels = len(self.regions)
+            f, ax = plt.subplots(
+                1, n_panels, figsize=(fwid*n_panels, fwid), sharex=True, sharey=True
+            )
+        else:
+            ax = self.gss[key_ax][0]
         tc_start = self.params.getint("tc_tbeg")
         tc_end = self.params.getint("tc_tend")
         twin = self.params.getint("tc_winsize")
@@ -611,6 +679,7 @@ class SelectivityFigure(MultipleRepFigure):
             
             self.data[key_gen] = (ms_dict, ms_shuff)
         ms_dict, ms_shuff = self.data[key_gen]
+        xs = ms_dict["linear"][1]
         if self.data.get(key_spec) is None or recompute:
             r_dict = {}
             r_shuff = {}
@@ -624,15 +693,16 @@ class SelectivityFigure(MultipleRepFigure):
                     ms_shuff, r, None, model_combination="interaction",
                 )
             self.data[key_spec] = r_dict, r_shuff
-        r_dict, r_shuff, xs = self.data[key_spec]
+        r_dict, r_shuff = self.data[key_spec]
 
-        self.plot_subspace_corr(ax, r_dict)
+        axs = self.plot_subspace_corr_tc(ax, r_dict, xs, shuff=r_shuff)
         if self.params.getboolean("use_nl_val"):
             y_label = "alignment index"
         else:
             y_label = "subspace correlation"
-        ax.set_ylabel(y_label)
-        gpl.clean_plot_bottom(ax)
+        axs[0].set_ylabel(y_label)
+        if not new_axes:
+            gpl.clean_plot_bottom(axs[0])
 
         
     def panel_subspace_corr_monkey(self, recompute=False):
@@ -683,7 +753,7 @@ class SelectivityFigure(MultipleRepFigure):
             "Vader": {"markerstyles": "D"},
         }
         self.plot_subspace_corr(axs[0], r_on, style_dict=markers)
-        self.plot_subspace_corr(axs[1], r_delay, style_dict=markers)
+        self.plot_subspace_corr(axs[1], r_delay, style_dict=markers, time="DELAY")
         if self.params.getboolean("use_nl_val"):
             y_label = "alignment index"
         else:
@@ -741,7 +811,7 @@ class SelectivityFigure(MultipleRepFigure):
             "Vader": {"markerstyles": "D"},
         }
         self.plot_subspace_corr(axs[0], r_on, style_dict=markers)
-        self.plot_subspace_corr(axs[1], r_delay, style_dict=markers)
+        self.plot_subspace_corr(axs[1], r_delay, style_dict=markers, time="DELAY")
         if self.params.getboolean("use_nl_val"):
             y_label = "alignment index"
         else:
@@ -1045,8 +1115,13 @@ class DecodingFigure(MultipleRepFigure):
         key = "ev_generalization"
         dead_perc = self.params.getfloat("exclude_middle_percentiles")
         min_trials = self.params.getint("min_trials_ev")
-        def mask_func(x): return x < 1
-        mask_var = "prob"
+        exclude_safe = self.params.getboolean("exclude_safe")
+        if exclude_safe:
+            def mask_func(x): return x < 1
+            mask_var = "prob"
+        else:
+            mask_func = None
+            mask_var = None
         use_split_dec = None
         dec_less = self.params.getboolean("dec_less")
         if self.data.get(key) is None or force_recompute:
@@ -1524,9 +1599,17 @@ class CombinedRepFigure(MultipleRepFigure):
         pca_pre = self.params.getfloat("pca_pre")
         regions = self.params.getlist("use_regions_rdm")
         min_trials = self.params.getint("min_trials_conds")
+        exclude_safe = self.params.getboolean("exclude_safe")
+        normalize_embedding_power = self.params.getboolean("normalize_embedding_power")
 
         if self.data.get(key) is None or recompute:
             exper_data = self.get_experimental_data(force_reload=force_reload)
+            if exclude_safe:
+                def mask_func(x): return x < 1
+                mask_var = "prob"
+            else:
+                mask_func = None
+                mask_var = None
 
             out_rdm_dict = mra.estimate_rdm_regions(
                 exper_data,
@@ -1539,10 +1622,15 @@ class CombinedRepFigure(MultipleRepFigure):
                 min_trials=min_trials,
                 pca_pre=pca_pre,
                 region_list=regions,
+                mask_var=mask_var,
+                mask_func=mask_func,
             )
 
             self.data[key] = out_rdm_dict
         out_rdm_dict = self.data[key]
+
+        if normalize_embedding_power:
+            out_rdm_dict = mra.normalize_embedding_power(out_rdm_dict)
 
         use_pairs_mb = (
             "order flips, side-values same",  # temporal misbinding
@@ -1559,6 +1647,8 @@ class CombinedRepFigure(MultipleRepFigure):
         conf3_color = self.params.getcolor("temporal_color")
         colors_mb = (conf3_color, conf2_color, conf1_color,)
 
+        mra.print_rdm_factorial_analysis(out_rdm_dict)
+        
         ax_r_mb, ax_a_mb = ax_rs[0, 0], ax_alls[0, 0]
         mrv.plot_dists_region(out_rdm_dict, use_pairs_mb, regions, colors_mb,
                               axs=(ax_r_mb, ax_a_mb),

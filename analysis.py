@@ -19,6 +19,8 @@ import scipy.linalg as sla
 import statsmodels.api as sm
 import statsmodels.formula.api as sm_formula
 import pandas as pd
+import scipy.special as ss
+import sklearn.manifold as skman
 
 import general.utility as u
 import general.neural_analysis as na
@@ -37,6 +39,33 @@ import rsatoolbox as rsa
 visual_regions = ('VISp', 'VISI', 'VISpm', 'VISam', 'VISrl', 'VISa')
 choice_regions = ('MOs', 'PL', 'ILA', 'ORB', 'MOp', 'SSp', 'SCm', 'MRN')
 
+
+def normalize_embedding_power(rdm_dict, **kwargs):
+    rdm_dict_new = {}
+    for r, (rdm_arr, rdm_list, ambig_dists, pop_mat) in rdm_dict.items():
+        factor = compute_embedding_power_factor(rdm_arr, **kwargs)
+        rdm_arr_new = rdm_arr / factor
+        ambig_dists_new = {}
+        for k, v in ambig_dists.items():
+            ambig_dists_new[k] = v / factor
+        rdm_dict_new[r] = (rdm_arr_new, rdm_list, ambig_dists_new, pop_mat)
+    return rdm_dict_new
+
+
+def compute_embedding_power_factor(rdm_arr, target_pwr=1, single_factor=True):
+    n_dims = rdm_arr.shape[1]
+    if single_factor:
+        m = skman.MDS(n_dims, dissimilarity="precomputed", normalized_stress="auto")
+        embed = m.fit_transform(np.mean(rdm_arr, axis=0))
+        factors = np.sqrt(np.sum(np.var(embed, axis=0)))
+    else:
+        factors = np.zeros(rdm_arr.shape)
+        for i, rdm in enumerate(rdm_arr):
+            m = skman.MDS(n_dims, dissimilarity="precomputed", normalized_stress="auto")
+            embed = m.fit_transform(rdm)
+            factors[i] = np.sqrt(np.sum(np.var(embed, axis=0)))
+    return factors
+        
 
 def estimate_distances(pwrs, tradeoffs, n_feats, n_vals, n_units=100, n_samples=320,
                        n_boots=100, sg_resamples=1):
@@ -195,12 +224,17 @@ def make_all_cond_masks(
         c1_targ=2,
         c2_targ=3,
         correct_only=False,
+        mask_var=None,
+        mask_func=None,
 ):
+    suff1 = " offer 1"
+    suff2 = " offer 2"
     o1_target = '{} offer 1'.format(decode_var)
     o2_target = '{} offer 2'.format(decode_var)
+    m1, m2 = _make_var_masks(data, mask_var, mask_func, suff1, suff2)
     out = _compute_masks(data, o1_target, o2_target, dead_perc=dead_perc,
                          use_split_dec=use_split_dec, c1_targ=c1_targ,
-                         c2_targ=c2_targ)
+                         dec_mask=m1, gen_mask=m2, c2_targ=c2_targ)
     mask_o1_h, mask_o1_l, mask_o2_h, mask_o2_l = out
 
     mask_o1_left = data['side of offer 1 (Left = 1 Right =0)'] == 1
@@ -262,8 +296,10 @@ def estimate_rdm_conditions(data, tbeg, tend,
                             min_neurs=15,
                             use_pseudo=True,
                             correct_only=False,
+                            mask_var=None,
+                            mask_func=None,
+                            subsample_neurons=None,
                             **kwargs):
-
     masks_t2 = make_all_cond_masks(
         data,
         decode_var=decode_var,
@@ -272,14 +308,19 @@ def estimate_rdm_conditions(data, tbeg, tend,
         dead_perc=dead_perc,
         use_split_dec=use_split_dec,
         correct_only=correct_only,
+        mask_var=mask_var,
+        mask_func=mask_func,
     )
     if use_pseudo:
         out = data.make_pseudo_pops(winsize, tbeg, tend, tstep, *masks_t2,
                                     tzfs=(dec_tzf,)*len(masks_t2),
                                     min_trials=min_trials,
                                     resamples=pop_resamples,
-                                    regions=regions)
+                                    regions=regions,
+                                    subsample_neurons=subsample_neurons)
         xs, cond_pops_t2 = out
+        print(regions)
+        print(list(cond_pops_t2[i][0].shape for i in range(len(cond_pops_t2))))
     else:
         session_mask = data['n_neurs'] > min_neurs
         data_n_neurs = data.session_mask(session_mask)
@@ -1596,7 +1637,7 @@ def compute_alignment_index(s1, s2, null=False, **kwargs):
     return out
 
 
-def compute_corr(s1, s2, pearson_brown=None, null=False, full_data=None):
+def compute_corr(s1, s2, pearson_brown=None, null=False, full_data=None, dim=-1):
     if len(s1.shape) == 2:
         s1 = np.expand_dims(s1, 0)
         s2 = np.expand_dims(s2, 0)
@@ -1608,13 +1649,13 @@ def compute_corr(s1, s2, pearson_brown=None, null=False, full_data=None):
         s1 = s_comb[:, :half]
         s2 = s_comb[:, half:]
         s1_uv = u.make_unit_vector(
-            s1[:, 0] - s1[:, -1]
+            s1[:, 0] - s1[:, -1], dim=dim,
         )
         s2_uv = u.make_unit_vector(
-            s2[:, 0] - s2[:, -1]
+            s2[:, 0] - s2[:, -1], dim=dim,
         )
     elif null:
-        s1_uv = np.zeros((len(full_data), full_data.shape[2]))
+        s1_uv = np.zeros((len(full_data),) + full_data.shape[2:])
         s2_uv = np.zeros_like(s1_uv)
         for i, s_i in enumerate(full_data):
             mu = np.mean(s_i, axis=0, keepdims=True)
@@ -1625,9 +1666,9 @@ def compute_corr(s1, s2, pearson_brown=None, null=False, full_data=None):
             s1_uv = _make_factor(v1_raw, u_, s)
             s2_uv = _make_factor(v2_raw, u_, s)
     else:
-        s1_uv = u.make_unit_vector(s1[:, 0] - s1[:, -1])
-        s2_uv = u.make_unit_vector(s2[:, 0] - s2[:, -1])
-    r = np.sum(s1_uv*s2_uv, axis=1)
+        s1_uv = u.make_unit_vector(s1[:, 0] - s1[:, -1], dim=dim)
+        s2_uv = u.make_unit_vector(s2[:, 0] - s2[:, -1], dim=dim)
+    r = np.sum(s1_uv*s2_uv, axis=dim)
     if pearson_brown is not None:
         r = pearson_brown*r/(1 + (pearson_brown - 1)*r)
     return r
@@ -2068,6 +2109,29 @@ def normalize_pred_dimensions(
     return data
 
 
+default_test_diff = (
+    "order flips, side-values same",  # temporal misbinding
+    "order flips, side-values flip",  # spatial misbinding
+)
+def print_rdm_factorial_analysis(
+        rdm_dict,
+        test_diff=default_test_diff,
+):
+    diff_distrs = {}
+    for k, (_, _, ambig_dists, _) in rdm_dict.items():
+        diff = ambig_dists[test_diff[0]] - ambig_dists[test_diff[1]]
+        diff_distrs[k] = diff
+    n_comps = ss.comb(len(rdm_dict), 2)
+    perc = 100 - 5 / n_comps
+    for k1, k2 in it.combinations(rdm_dict.keys(), 2):
+        
+        high, low = u.conf_interval(
+            diff_distrs[k1] - diff_distrs[k2], withmean=True, perc=perc,
+        )[:, 0]
+        print("{} - {}: {} - {}".format(k1, k2, low, high))
+    return diff_distrs
+
+
 def print_factorial_analysis(
         regions,
         *args,
@@ -2203,6 +2267,7 @@ def compute_split_halfs_model_mix(
         n_full_data_trials=5,
         compute_null=True,
         model_combination="weighted_sum",
+        size_thr=10**8,
         **kwargs,
 ):
     keys = list(model_dict.keys())
@@ -2218,7 +2283,6 @@ def compute_split_halfs_model_mix(
         stim12_samps.append(stim12)
         stim21_samps.append(stim21)
         stim22_samps.append(stim22)
-        print(stim11.shape)
     shape = stim11.shape
     stim11_samps.append(np.zeros(shape))
     stim12_samps.append(np.zeros(shape))
@@ -2262,12 +2326,33 @@ def compute_split_halfs_model_mix(
             stim12[..., i, :] = np.sum(ms_weights * stim12_samps[..., i, :], axis=0)
             stim21[..., i, :] = np.sum(ms_weights * stim21_samps[..., i, :], axis=0)
             stim22[..., i, :] = np.sum(ms_weights * stim22_samps[..., i, :], axis=0)
-        
-    rs_wi = align_func(stim11, stim12)
-    rs_null = align_func(stim11, stim12, null=True, full_data=full_reps)
-    
-    rs_ac1 = align_func(stim11, stim21)
-    rs_ac2 = align_func(stim12, stim22)
+
+    if len(stim11.shape) == 4:
+        dim = -2
+    else:
+        dim = -1
+    if stim11.size > size_thr:
+        rs_wi = np.zeros((stim11.shape[0], stim11.shape[-1]))
+        rs_null = np.zeros_like(rs_wi)
+        rs_ac1 = np.zeros_like(rs_wi)
+        rs_ac2 = np.zeros_like(rs_wi)
+        for i in range(stim11.shape[0]):
+            rs_wi[i:i+1] = align_func(stim11[i:i+1], stim12[i:i+1], dim=dim)
+            rs_null[i:i+1] = align_func(
+                stim11[i:i+1],
+                stim12[i:i+1],
+                dim=dim,
+                null=True,
+                full_data=full_reps,
+            )
+            rs_ac1[i:i+1] = align_func(stim11[i:i+1], stim21[i:i+1], dim=dim)
+            rs_ac2[i:i+1] = align_func(stim12[i:i+1], stim22[i:i+1], dim=dim)
+    else:
+        rs_wi = align_func(stim11, stim12, dim=dim)
+        rs_null = align_func(stim11, stim12, null=True, full_data=full_reps, dim=dim)
+        rs_ac1 = align_func(stim11, stim21, dim=dim)
+        rs_ac2 = align_func(stim12, stim22, dim=dim)
+
     rs_ac = np.sqrt(rs_ac1*rs_ac2)
     if pearson_brown:
         rs_wi = 2*rs_wi/(1 + rs_wi)
@@ -2663,6 +2748,27 @@ def nearest_decoder_epochs(data, masks, tbeg=100, tend=1000,
     return xs, dec_perf, dec_info, dec_confusion
     
 
+def generalization_n_neurs(data, tbeg, tend, dec_field, gen_field,
+                           dead_perc=30, winsize=500, tstep=20,
+                           use_split_dec=None,
+                           correct_only=False,
+                           subsample_neurons=None,
+                           c1_targ=2, c2_targ=3,
+                           f1_mask=None, f2_mask=None,
+                           regions=None,
+                           **kwargs,):
+    out = _compute_masks(data, dec_field, gen_field, dead_perc=dead_perc,
+                         use_split_dec=use_split_dec, dec_mask=f1_mask,
+                         gen_mask=f2_mask, c1_targ=c1_targ, c2_targ=c2_targ)
+    mask_c1, mask_c2, gen_mask_c1, gen_mask_c2 = out
+    if correct_only:
+        choice_mask = data['subj_ev_chosen'] - data['subj_ev_unchosen'] > 0
+        mask_c1 = mask_c1.rs_and(choice_mask)
+        mask_c2 = mask_c2.rs_and(choice_mask)
+    out = data.neuron_trial_tradeoff(mask_c1, mask_c2, regions=regions)
+    return out
+
+
 def generalization_analysis(data, tbeg, tend, dec_field, gen_field,
                             dead_perc=30, winsize=500, tstep=20,
                             pop_resamples=20, kernel='linear',
@@ -2834,6 +2940,20 @@ default_suffixes = (('_chosen', '_unchosen'), ('_left', '_right'),
 default_suffixes = (('_left', '_right'),
                     (' offer 1', ' offer 2'))
 
+
+def _make_var_masks(data, mask_var, mask_func, *mask_fields, suffs=True):
+    if mask_var is None and mask_func is None:
+        masks = list(None for mf in mask_fields)
+    else:
+        if suffs:
+            mask_fields = list(mask_var + mf for mf in mask_fields)
+        if mask_func is not None:
+            masks = list(mask_func(data[mf]) for mf in mask_fields)
+        else:
+            masks = list(None for mf in mask_fields)
+    return masks
+
+
 default_timing = (('offer_chosen_on', 'offer_unchosen_on'),
                   ('offer_left_on', 'offer_right_on'),
                   ('Offer 1 on', 'Offer 2 on'))
@@ -2848,18 +2968,9 @@ def _compute_all_funcs(data, tbeg, tend, dec_var, func,
     for i, (dec_suff, gen_suff) in enumerate(suffixes):
         dec_field = dec_var + dec_suff
         gen_field = dec_var + gen_suff
-        if mask_var is None:
-            mask_dec_field = dec_field
-            mask_gen_field = gen_field
-        else:
-            mask_dec_field = mask_var + dec_suff
-            mask_gen_field = mask_var + gen_suff
-        if mask_func is not None:
-            dec_mask = mask_func(data[mask_dec_field])
-            gen_mask = mask_func(data[mask_gen_field])
-        else:
-            dec_mask = None
-            gen_mask = None
+        dec_mask, gen_mask = _make_var_masks(
+            data, mask_var, mask_func, dec_suff, gen_suff
+        )
         dec_tzf, gen_tzf = timing[i]
         out = func(data, tbeg, tend, dec_field, gen_field,
                    f1_mask=dec_mask, f2_mask=gen_mask,
@@ -2880,6 +2991,7 @@ def _compute_all_funcs(data, tbeg, tend, dec_var, func,
             out_dict[key] = out
     return out_dict  
 
+
 def compute_all_binding(*args, **kwargs):
     return _compute_all_funcs(*args, binding_analysis,
                               **kwargs)
@@ -2887,6 +2999,11 @@ def compute_all_binding(*args, **kwargs):
 def compute_all_generalizations(*args, **kwargs):
     return _compute_all_funcs(*args, generalization_analysis,
                               **kwargs)
+
+def compute_all_generalization_n_neurs(*args, **kwargs):
+    return _compute_all_funcs(*args, generalization_n_neurs,
+                              **kwargs)
+    
 
 def compute_all_xor(*args, **kwargs):
     return _compute_all_funcs(*args, xor_analysis,
