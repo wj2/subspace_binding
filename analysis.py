@@ -1649,10 +1649,10 @@ def compute_corr(s1, s2, pearson_brown=None, null=False, full_data=None, dim=-1)
         s1 = s_comb[:, :half]
         s2 = s_comb[:, half:]
         s1_uv = u.make_unit_vector(
-            s1[:, 0] - s1[:, -1], dim=dim,
+            s1[:, 0] - s1[:, -1], dim=dim, squeeze=False
         )
         s2_uv = u.make_unit_vector(
-            s2[:, 0] - s2[:, -1], dim=dim,
+            s2[:, 0] - s2[:, -1], dim=dim, squeeze=False
         )
     elif null:
         s1_uv = np.zeros((len(full_data),) + full_data.shape[2:])
@@ -1666,8 +1666,8 @@ def compute_corr(s1, s2, pearson_brown=None, null=False, full_data=None, dim=-1)
             s1_uv = _make_factor(v1_raw, u_, s)
             s2_uv = _make_factor(v2_raw, u_, s)
     else:
-        s1_uv = u.make_unit_vector(s1[:, 0] - s1[:, -1], dim=dim)
-        s2_uv = u.make_unit_vector(s2[:, 0] - s2[:, -1], dim=dim)
+        s1_uv = u.make_unit_vector(s1[:, 0] - s1[:, -1], dim=dim, squeeze=False)
+        s2_uv = u.make_unit_vector(s2[:, 0] - s2[:, -1], dim=dim, squeeze=False)
     r = np.sum(s1_uv*s2_uv, axis=dim)
     if pearson_brown is not None:
         r = pearson_brown*r/(1 + (pearson_brown - 1)*r)
@@ -2107,6 +2107,54 @@ def normalize_pred_dimensions(
                 res['sigma'][0, 0] = sig
 
     return data
+
+
+dec_cond_groups = {
+    "side": (
+        ('subj_ev_left', 'subj_ev_right'), ('subj_ev_right', 'subj_ev_left')
+    ),
+    "time": (
+        ('subj_ev offer 1', 'subj_ev offer 2'), ('subj_ev offer 2', 'subj_ev offer 1')
+    ),
+}
+def print_dec_differences(
+        dec_dict, region_list=None, cond_groups=dec_cond_groups, t_comp=250, p_thr=.05,
+):
+    if region_list is None:    
+        region_list = list(dec_dict.keys())
+    comb_dict = {}
+    for j, r in enumerate(region_list):
+        comb_dict[r] = {}
+        cond_dict = dec_dict[r]
+        for i, (cond, ks) in enumerate(cond_groups.items()):
+            decs = []
+            gens = [] 
+            for k in ks:
+                res = cond_dict[k]
+                dec, xs = res[:2]
+                decs.append(dec)
+                if len(res) > 2:
+                    gen = res[-1]
+                    gens.append(gen)
+            dec = np.mean(decs, axis=(0, 2))
+            if len(gens) > 0:
+                gen = np.mean(gens, axis=(0, 2))
+            comb_dict[r][cond] = (dec, gen)
+    t_ind = np.argmin((xs - t_comp)**2)
+    print("comparison time: {}".format(xs[t_ind]))
+    n_comps = ss.comb(len(region_list), 2)
+    adj_perc = 100 - 100*p_thr / n_comps
+    for i, j in it.combinations(range(len(region_list)), 2):
+        r1, r2 = region_list[i], region_list[j]
+        for cond in cond_groups.keys():
+            dec1, gen1 = comb_dict[r1][cond]
+            dec2, gen2 = comb_dict[r2][cond]
+
+            high, low = u.conf_interval(dec1 - dec2, withmean=True, perc=adj_perc)
+            s = "{} - {}, {}, {:.2f} - {:.2f}".format(
+                r1, r2, cond, low[t_ind], high[t_ind]
+            )
+            print(s)
 
 
 default_test_diff = (

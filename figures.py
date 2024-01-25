@@ -109,6 +109,11 @@ class MultipleRepFigure(pu.Figure):
                 "saved:\n{}".format(unsaved_keys)
             )
 
+    @property
+    def regions(self):
+        regions = self.params.getlist("use_regions")
+        return regions
+
 
 def _accumulate_time(pop, keepdim=True, ax=1):
     out = np.concatenate(list(pop[..., i] for i in range(pop.shape[-1])), axis=ax)
@@ -132,7 +137,6 @@ class SelectivityFigure(MultipleRepFigure):
 
         params = cf[fig_key]
         self.fig_key = fig_key
-        self.regions = params.getlist("use_regions")
 
         super().__init__(fsize, params, colors=colors, **kwargs)
 
@@ -254,11 +258,11 @@ class SelectivityFigure(MultipleRepFigure):
                 ms=3,
             )
 
-
     def panel_subspace_corr(self, recompute=False): 
-        key_gen = "subspace_corr"
+        key_gen = "subspace_corr_nominal"
         key_spec = "subspace_corr_orig"
-        axs = self.gss[key_gen]
+        key_ax = "subspace_corr"
+        axs = self.gss[key_ax]
 
         tb_on = self.params.getint("tbeg_on")
         te_on = self.params.getint("tend_on")
@@ -274,8 +278,8 @@ class SelectivityFigure(MultipleRepFigure):
             )
             self.data[key_gen] = (ms_on_dict, ms_on_shuff, ms_delay_dict, ms_delay_shuff)
         ms_list = self.data[key_gen]
-        if self.data.get(key_spec) is None or recompute:
-            r_dicts = list({} for ms in ms_list)
+        if self.data.get(key_spec) is None or recompute or True:
+            r_dicts = list({r: {} for r in self.regions} for ms in ms_list)
             for i, r in enumerate(self.regions):
                 use_m = "all"
                 for j, ms_dict in enumerate(ms_list):
@@ -369,67 +373,53 @@ class SelectivityFigure(MultipleRepFigure):
        
         
     def panel_subspace_corr_time(self, recompute=False):
-        key = "subspace_corr"
-        axs = self.gss[key]
-        data = self.get_exper_data()
+        key_gen = "subspace_corr_time_models"
+        key_spec = "subspace_corr_time"
+        key_ax = "subspace_corr"
+        axs = self.gss[key_ax]
         tb_on = self.params.getint("tbeg_on")
         te_on = self.params.getint("tend_on")
         tb_delay = self.params.getint("tbeg_delay")
         te_delay = self.params.getint("tend_delay")
-
-        use_nl_val = self.params.getboolean("use_nl_value")
-        if use_nl_val:
-            align_func = mra.compute_alignment_index
-            pred_func = mra.interaction_spline_pred
-        else:
-            align_func = mra.compute_corr
-            pred_func = mra.interaction_pred
 
         groups = {
             "full": {"t1_only": False, "t2_only": False, "decrement": 2},
             "offer 1": {"t1_only": True, "t2_only": False},
             "offer 2": {"t1_only": False, "t2_only": True},
         }
-        if self.data.get(key) is None or recompute:
+        if self.data.get(key_gen) is None or recompute:
             out_dict = {}
             for k, kw in groups.items():
-                out_sessions, _ = mra.make_predictor_matrices(
-                    data,
-                    t_beg=tb_on,
-                    t_end=te_on,
-                    transform_value=use_nl_val,
-                    **kw,
+                out_on = self.fit_subspace_models(tb_on, te_on, **kw)
+                out_on_shuff = self.fit_subspace_models(
+                    tb_on, te_on, shuffle_targs=True,
                 )
-                boots_on = mra.fit_bootstrap_models(out_sessions)
+                out_delay = self.fit_subspace_models(tb_delay, te_delay, **kw)
+                out_delay_shuff = self.fit_subspace_models(
+                    tb_delay, te_delay, shuffle_targs=True,
+                )
+                out_dict[k] = (out_on, out_on_shuff, out_delay, out_delay_shuff)
+            self.data[key_gen] = out_dict
 
-                out_sessions, _ = mra.make_predictor_matrices(
-                    data,
-                    t_beg=tb_delay,
-                    t_end=te_delay,
-                    transform_value=use_nl_val,
-                    **kw,
-                )
-                boots_delay = mra.fit_bootstrap_models(out_sessions)
-                
-                r_on_dict = {}
-                r_delay_dict = {}
+        ms_group_dict = self.data[key_gen]
+        if self.data.get(key_spec) is None or recompute:
+            r_group_dict = {}
+            for k, ms_list in ms_group_dict.items():
+                r_dicts = list({r: {} for r in self.regions} for ms in ms_list)
                 for i, r in enumerate(self.regions):
-                    if r == "all":
-                        r_list = None
-                    else:
-                        r_list = (r,)
-                    out_on = mra.compute_split_halfs(
-                        boots_on, pred_func, use_regions=r_list
-                    )
-                    r_on_dict[r] = out_on
-                    out_delay = mra.compute_split_halfs(
-                        boots_delay, pred_func, use_regions=r_list
-                    )
-                    r_delay_dict[r] = out_delay
-                out_dict[k] = (r_on_dict, r_delay_dict)
-            self.data[key] = out_dict
+                    use_m = "all"
+                    for j, ms_dict in enumerate(ms_list):
+                        r_dicts[j][r] = r_dicts[j][r].get(use_m, {})
+                        r_dicts[j][r][use_m] = self.compute_subspace_corr(
+                            ms_dict,
+                            r,
+                            use_m,
+                            model_combination="interaction",
+                        )
+                r_group_dict[k] = r_dicts
+            self.data[key_spec] = r_group_dict
 
-        model_dict = self.data[key]
+        r_group_dict = self.data[key_spec]
         null_color = self.params.getcolor("null_corr_color")
         style_kw = {
             "offer 1": {"markerstyles": "o"},
@@ -441,42 +431,31 @@ class SelectivityFigure(MultipleRepFigure):
             "offer 2": 0,
             "full": .2
         }
-        for k, (boots_on, boots_delay) in model_dict.items():
-            for i, r in enumerate(self.regions):
-                r_color = self.get_color_dict()[r]
-                if r == "all":
-                    r_list = None
-                else:
-                    r_list = (r,)
-                mrv.plot_split_halfs_only(
-                    *boots_on[r],
-                    ax=axs[0],
-                    pt=i + offsets[k],
-                    colors=(r_color, null_color, null_color),
-                    **style_kw.get(k, {}),
-                )
-                mrv.plot_split_halfs_only(
-                    *boots_delay[r],
-                    ax=axs[1],
-                    pt=i + offsets[k],
-                    colors=(r_color, null_color, null_color),
-                    **style_kw.get(k, {}),
-                )
-        gpl.clean_plot(axs[0], 0)
-        gpl.clean_plot_bottom(axs[0])
-        gpl.clean_plot(axs[1], 0)
-        gpl.add_hlines(0, axs[0])
-        gpl.add_hlines(0, axs[1])
-        axs[1].spines["bottom"].set_visible(False)
-        axs[1].set_xticks(np.arange(len(self.regions)))
-        axs[1].set_xticklabels(self.regions)
-
-        if use_nl_val:
+        for k, r_dict in r_group_dict.items():
+            r_on, r_on_shuff, r_delay, r_delay_shuff = self.data[key_spec]
+            self.plot_subspace_corr(
+                axs[0],
+                r_on,
+                style_dict=style_kw[k],
+                shuff=r_on_shuff,
+                offset=offsets[k],
+            )
+            self.plot_subspace_corr(
+                axs[1],
+                r_delay,
+                offset=offsets[k],
+                style_dict=style_kw[k],
+                shuff=r_delay_shuff,
+                time="DELAY",
+            )
+        if self.params.getboolean("use_nl_val"):
             y_label = "alignment index"
         else:
             y_label = "subspace correlation"
         axs[0].set_ylabel(y_label)
         axs[1].set_ylabel(y_label)
+        axs[1].spines["bottom"].set_visible(False)
+        gpl.clean_plot_bottom(axs[0])
 
 
     def fit_subspace_models(
@@ -489,6 +468,7 @@ class SelectivityFigure(MultipleRepFigure):
             norm_value=True,
             data=None,
             shuffle_targs=False,
+            **kwargs,
     ):
         if data is None:
             data = self.get_exper_data()
@@ -515,6 +495,7 @@ class SelectivityFigure(MultipleRepFigure):
                 n_value_bins=n_value_bins,
                 shuffle_targets=shuffle_targs,
                 **ms,
+                **kwargs,
             )
             boots = mra.fit_bootstrap_models(out_sessions)
             ms_dict[ms_k] = boots, xs, out_sessions
@@ -2081,6 +2062,102 @@ class GeneralTheoryFigure(MultipleRepFigure):
         ax_dl.set_xlabel('subspace correlation (r)')
 
 
+class DecodingCurrentPastFigure(MultipleRepFigure):
+    def __init__(self, fig_key="combined_rep_tc_figure", colors=colors, **kwargs):
+        fsize = (8, 4)
+        cf = u.ConfigParserColor()
+        cf.read(config_path)
+
+        params = cf[fig_key]
+        self.fig_key = fig_key
+        self.saved_coefficients = None
+        super().__init__(fsize, params, colors=colors, **kwargs)    
+
+    def make_gss(self):
+        gss = {}
+        n_times = 2
+        n_targs = 2
+
+        gs_tc = pu.make_mxn_gridspec(
+            self.gs, n_targs, n_times,
+            0, 100, 0, 45, 5, 5
+        )
+        axs_tc = self.get_axs(gs_tc, sharey="all", sharex="all")
+        gss["panel_dec_tc"] = axs_tc
+
+        gs_regions = pu.make_mxn_gridspec(
+            self.gs, n_targs, n_times,
+            0, 100, 55, 100, 5, 5
+        )
+        axs_regions = self.get_axs(gs_regions, sharey="all", sharex="all")
+        gss["panel_regions"] = axs_regions
+
+        self.gss = gss
+
+    def panel_dec_tc(self, reload=False):
+        key = "panel_dec_tc"
+        axs = self.gss[key]
+        
+        ri = self.params.get("tc_run_ind")
+        eg_region = self.params.get("tc_eg_region")
+        if self.data.get(key) is None or reload:
+            comb_dict = mraux.load_decoding_runs(ri)
+            self.data[key] = comb_dict
+        comb_dict = self.data[key]
+        mrv.plot_current_past_dict(comb_dict, plot_regions=(eg_region,), axs=axs)
+
+        
+class DecodingTCFigure(MultipleRepFigure):
+    def __init__(self, fig_key="dec_tc_figure", colors=colors, **kwargs):
+        fsize = (4.5, 8)
+        cf = u.ConfigParserColor()
+        cf.read(config_path)
+
+        params = cf[fig_key]
+        self.fig_key = fig_key
+        self.saved_coefficients = None
+        super().__init__(fsize, params, colors=colors, **kwargs)
+
+    def make_gss(self):
+        gss = {}
+        n_conds = 2
+        n_regions = len(self.regions)
+
+        gs_decs = pu.make_mxn_gridspec(
+            self.gs, n_regions, n_conds,
+            0, 100, 0, 100, 5, 15
+        )
+        axs_decs = self.get_axs(gs_decs, sharey="all", sharex="all")
+
+        gss["panel_dec_tc"] = axs_decs
+        self.gss = gss
+
+    def panel_dec_tc(self, reload=False):
+        key = "panel_dec_tc"
+        axs = self.gss[key]
+
+        if self.data.get(key) is None or reload:
+            comb_dict = mraux.load_decoding_runs("11370117")
+            self.data[key] = comb_dict
+        dec_dict = self.data[key]["decoding"]
+
+        mrv.plot_dec_dict(
+            dec_dict,
+            axs=axs.T,
+            color_dict=self.get_color_dict(),
+            region_list=self.regions,
+            y_label="decoding performance",
+        )
+        mra.print_dec_differences(dec_dict, t_comp=250)
+        mra.print_dec_differences(dec_dict, t_comp=500)
+        mra.print_dec_differences(dec_dict, t_comp=750)
+        
+        axs[-1, 0].set_xlabel("time from offer onset")
+        axs[-1, 1].set_xlabel("time from offer onset")
+        axs[0, 0].set_title("space")
+        axs[0, 1].set_title("time")
+    
+        
 class TheoryFigure(MultipleRepFigure):
     def __init__(self, fig_key="theory_figure", colors=colors, **kwargs):
         fsize = (4.5, 8)
@@ -2113,7 +2190,13 @@ class TheoryFigure(MultipleRepFigure):
         gs3 = pu.make_mxn_gridspec(self.gs, 1, n_conds, 80, 100, 0, 100, 10, 15)
         axs3 = self.get_axs(gs3, sharey=True)
 
-        gss["panel_theory_dec_plot"] = (axs_dists, np.concatenate((axs1, axs2, axs3)).T)
+        gs_inset = pu.make_mxn_gridspec(self.gs, 1, n_conds, 80, 90, 20, 100, 0, 35)
+        axs_inset = self.get_axs(gs_inset, sharey=True, sharex=True)
+
+        gss["panel_theory_dec_plot"] = (
+            axs_dists, np.concatenate((axs1, axs2, axs_inset)).T
+        )
+        gss["panel_theory_comparison"] = axs3
         self.gss = gss
 
     def get_coeffs_bootstrapped(
@@ -2216,6 +2299,58 @@ class TheoryFigure(MultipleRepFigure):
             self.data[key] = out_prediction
         return self.data[key]
 
+    def panel_theory_comparison(self):
+        key = "panel_theory_comparison"
+        axs_inset = self.gss[key]
+        
+        preds, decs = self._get_gen_emp_pred()
+        regions = self.params.getlist("use_regions")
+
+        normalize_dimensions = self.params.getboolean("normalize_dimensions")
+        n_virtual_dims = self.params.getint("n_virtual_dims")
+
+        if normalize_dimensions:
+            preds = mra.normalize_pred_dimensions(preds, n_virtual_dims)
+
+        use_contrasts = self.params.getlist("use_contrasts")
+        if use_contrasts is None:
+            contrasts = preds[regions[0]].dtype.names
+        else:
+            contrasts = use_contrasts
+        cnames = self.params.getlist("contrast_names")
+        if cnames is None:
+            cnames = contrasts
+        comp_region = "all"
+        for i, region in enumerate(regions):
+            for j, contrast in enumerate(contrasts):
+                pred_ij = preds[region][contrast]
+                dec_ij = decs[region][contrast]
+                comp_pred_ij = preds[comp_region][contrast]
+                color = self.get_color_dict()[region]
+                try:
+                    print("{}-{}".format(region, comp_region), cnames[j])
+                    mrv.plot_data_pred(
+                        pred_ij[0, 0],
+                        dec_ij[0, 0],
+                        label=region,
+                        color=color,
+                        ax_comb=axs_inset[0, j],
+                        comp_pred=comp_pred_ij[0, 0],
+                        print_differences=True,
+                    )
+                except IndexError as e:
+                    print(e)
+                    s = "did not plot {} for {} (likely a nan)"
+                    print(s.format(region, contrast))
+        for i, j in u.make_array_ind_iterator(axs_inset.shape):
+            ax = axs_inset[i, j]
+            gpl.add_hlines(.125, ax)
+            gpl.add_vlines(.5, ax)
+            if j == 0:
+                ax.set_ylabel("binding error rate")
+            ax.set_xlabel("generalization\nerror rate")
+        
+
     def panel_theory_dec_plot(self):
         key = "panel_theory_dec_plot"
         axs_dists, axs = self.gss[key]
@@ -2223,7 +2358,7 @@ class TheoryFigure(MultipleRepFigure):
         preds, decs = self._get_gen_emp_pred()
         regions = self.params.getlist("use_regions")
 
-        normalize_dimensions = self.params.getboolean("normalize_dimensions")
+        normalize_dimensions = False
         n_virtual_dims = self.params.getint("n_virtual_dims")
 
         if normalize_dimensions:
@@ -2252,7 +2387,6 @@ class TheoryFigure(MultipleRepFigure):
                 comp_pred_ij = preds[comp_region][contrast]
                 color = self.get_color_dict()[region]
                 try:
-                    print("{}-{}".format(region, comp_region), cnames[j])
                     mrv.plot_data_pred(
                         pred_ij[0, 0],
                         dec_ij[0, 0],
@@ -2271,8 +2405,8 @@ class TheoryFigure(MultipleRepFigure):
         for j in range(axs.shape[0]):
             axs[j, 0].set_title(cnames[j])
             axs[j, 1].set_xlabel("subspace correlation (r)")
-            axs[j, 2].set_xlabel("generalization\nerror rate")
-            axs[j, 2].set_xlabel("generalization\nerror rate")
+            # axs[j, 2].set_xlabel("generalization\nerror rate")
+            # axs[j, 2].set_xlabel("generalization\nerror rate")
             gpl.add_hlines(0.125, axs[j, 0])
             gpl.add_hlines(0.5, axs[j, 1])
             gpl.add_hlines(0.125, axs[j, 2])
@@ -2281,7 +2415,7 @@ class TheoryFigure(MultipleRepFigure):
         # axs_dists[0, -1].legend(handles=(l_lin, l_con), frameon=False)
         axs[0, 1].set_ylabel("generalization\nerror rate")
         axs[0, 0].set_ylabel("binding error rate")
-        axs[0, 2].set_ylabel("binding error rate")
+        # axs[0, 2].set_ylabel("binding error rate")
 
     def _get_subspace_correlations(
         self,

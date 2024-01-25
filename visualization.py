@@ -296,28 +296,56 @@ def visualize_model_weights(comp_dict, use_regions=None,
         use_regions = ('OFC', 'PCC', 'pgACC', 'VS', 'vmPFC')
     weights = []
     highlights = []
+    monkeys = []
     for ind, v in comp_dict.items():
-        (r, _, _, _) = ind
+        (r, monk, _, _) = ind
         if r in use_regions and not np.any(v['warning']):
             k_weights = v['weight']
             ws1 = np.sum(k_weights[v1_i] for v1_i in v1_keys)
             ws2 = np.sum(k_weights[v2_i] for v2_i in v2_keys)
             ws3 = np.sum(k_weights[v3_i] for v3_i in v3_keys)
             weights.append((ws1, ws2, ws3))
+            monkeys.append(monk)
             if ind in highlight_inds:
                 highlights.append((ws1, ws2, ws3))
 
+    monkeys = np.array(monkeys)
+    u_monks = np.unique(monkeys)
     w_arr = np.array(weights)
     if print_props:
         m_types = np.argmax(w_arr, axis=1)
-        print('{}: noise best fit: {}'.format(use_regions,
+        print('{}: noise best fit: {:.2f}'.format(use_regions,
                                               np.mean(m_types == 0)))
-        print('{}: linear best fit: {}'.format(use_regions,
+        print('{}: linear best fit: {:.2f}'.format(use_regions,
                                                np.mean(m_types == 1)))
-        print('{}: interaction best fit: {}'.format(use_regions,
+        print('{}: interaction best fit: {:.2f}'.format(use_regions,
                                                     np.mean(m_types == 2)))
+        for um in u_monks:
+            mask = monkeys == um
+            m_types = np.argmax(w_arr[mask], axis=1)
+            print(
+                '{}, {}: noise best fit: {:.2f}  {}/{}'.format(
+                    use_regions,
+                    um,
+                    np.mean(m_types == 0),
+                    np.sum(m_types == 0),
+                    len(m_types),
+                )
+            )
+            print(
+                '{}, {}: linear best fit: {:.2f}  {}/{}'.format(
+                    use_regions, um, np.mean(m_types == 1),
+                    np.sum(m_types == 1),
+                    len(m_types),
+                )
+            )
+            print(
+                '{}, {}: interaction best fit: {:.2f}  {}/{}'.format(
+                    use_regions, um, np.mean(m_types == 2), np.sum(m_types == 2),
+                    len(m_types))
+            )
+            
     ax = gpl.visualize_simplex_2d(w_arr,  **kwargs)
-
     if len(highlights) > 0:
         h_arr = np.array(highlights)
 
@@ -352,23 +380,184 @@ def plot_dist_dict(
             )
         axs[i].set_title(r)
     
+        
+def _dec_res_func(res):
+    dec, xs = res[:2]
+    dec = np.mean(dec, axis=1)
+    out = [dec, xs]
+    if len(res) > 2:
+        gen = res[-1]
+        gen = np.mean(gen, axis=1)
+        out.append(gen)
+    return out
 
 
-dec_cond_groups = {
-    "side": (
-        ('subj_ev_left', 'subj_ev_right'), ('subj_ev_right', 'subj_ev_left')
-    ),
-    "time": (
-        ('subj_ev offer 1', 'subj_ev offer 2'), ('subj_ev offer 2', 'subj_ev offer 1')
-    ),
-}
+def _pred_res_func(res):
+    out = (res["d_l"], res["d_n"])
+    return out
+
+            
+def _organize_dec_dict(
+        dec_dict,
+        region_list=None,
+        comb_func=np.mean,
+        cond_groups=mra.dec_cond_groups,
+        res_func=_dec_res_func,
+        default_len=2,
+):
+    if region_list is None:    
+        region_list = dec_dict.keys()
+    out_dict = {}
+    for j, r in enumerate(region_list):
+        out_dict[r] = {}
+        cond_dict = dec_dict[r]
+        for i, (cond, ks) in enumerate(cond_groups.items()):
+            outs = None
+            for ind, k in enumerate(ks):
+                res = cond_dict[k]
+                if res is not None:
+                    out = res_func(res)
+                    if outs is None:
+                        outs = list([] for _ in out)
+                    list(o.append(out[i]) for i, o in enumerate(outs))
+            if outs is None:
+                outs = (None,)*default_len
+            else:
+                outs = list(comb_func(o, axis=0) for o in outs)
+            out_dict[r][cond] = outs
+    return out_dict
+
+        
+def plot_pred_dict(
+        dec_dict,
+        l_color=None,
+        n_color=None,
+        axs=None,
+        fwid=1,
+        set_title=False,
+        y_label=None,
+        cond_groups=mra.dec_cond_groups,
+        offset=.2,
+        t_ind=-1,
+        res_func=_pred_res_func,
+        **kwargs,
+):
+    n_plots = len(cond_groups)
+    if axs is None:
+        f, axs = plt.subplots(
+            n_plots,
+            1,
+            figsize=(fwid, fwid*n_plots),
+            sharey=True,
+        )
+    org_dict = _organize_dec_dict(
+        dec_dict, cond_groups=cond_groups, res_func=res_func, **kwargs
+    )
+    regions = list(org_dict.keys())
+    print(org_dict.keys())
+    for j, (r, conds) in enumerate(org_dict.items()):
+        for i, (cond, (dl, dn)) in enumerate(conds.items()):
+            if dl is not None:
+                gpl.violinplot(
+                    [dl[:, t_ind]], [j - offset/2], ax=axs[i], color=l_color
+                )
+            if dn is not None:
+                gpl.violinplot(
+                    [dn[:, t_ind]], [j + offset/2], ax=axs[i], color=n_color
+                )
+    for i in range(len(conds)):
+        axs[i].set_xticks(range(len(regions)))
+        axs[i].set_xticklabels(regions)
+        gpl.clean_plot(axs[i], 0)
+        gpl.add_hlines(0, axs[i])
+        if i < len(conds) - 1:
+            gpl.clean_plot_bottom(axs[i])
+
+
+def plot_monkey_pred_dict(
+        monkey_dict,
+        l_color=None,
+        n_color=None,
+        axs=None,
+        fwid=1,
+        offset=.2,
+        t_ind=-1,
+        excl_all=True,
+        single_letter=True,
+        comb_func=np.concatenate,
+        **kwargs,
+):
+    r_dict = {}
+    for i, (m, comb_dict) in enumerate(monkey_dict.items()):
+        org_dict = _organize_dec_dict(
+            comb_dict["predictions"], res_func=_pred_res_func, comb_func=comb_func,
+        )
+        for k, v in org_dict.items():
+            kd = r_dict.get(k, {})
+            kd[m] = v
+            r_dict[k] = kd
+    if excl_all:
+        r_dict.pop("all")
+    if axs is None:
+        f, axs = plt.subplots(
+            2,
+            len(r_dict),
+            figsize=(fwid*len(r_dict), fwid*2),
+            sharey=True,
+        )
+    for j, (region, m_dict) in enumerate(r_dict.items()):
+        for k, (monkey, conds) in enumerate(m_dict.items()):
+            for i, (cond, (dl, dn)) in enumerate(conds.items()):
+                if dl is not None:
+                    gpl.violinplot(
+                        [dl[:, t_ind]], [k - offset/2], ax=axs[i, j], color=l_color
+                    )
+                if dn is not None:
+                    gpl.violinplot(
+                        [dn[:, t_ind]], [k + offset/2], ax=axs[i, j], color=n_color
+                    )
+                if i == 0:
+                    axs[i, j].set_title(region)
+                if i == len(conds) - 1:
+                    axs[i, j].set_xticks(range(len(m_dict)))
+                    m_names = list(m_dict.keys())
+                    if single_letter:
+                        m_names = list(n[0] for n in m_names)
+                    axs[i, j].set_xticklabels(m_names)
+    for i, j in u.make_array_ind_iterator(axs.shape):
+        gpl.clean_plot(axs[i, j], j)
+        if i == 0:
+            gpl.clean_plot_bottom(axs[i, j])
+        gpl.add_hlines(0, axs[i, j])
+    return axs
+
+            
+def plot_monkey_dec_dict(monkey_dict, axs=None, fwid=1, **kwargs):
+    if axs is None:
+        f, axs = plt.subplots(
+            2,
+            len(monkey_dict),
+            figsize=(fwid*len(monkey_dict), fwid*2),
+            sharex=True,
+            sharey=True,
+        )
+    for i, (m, comb_dict) in enumerate(monkey_dict.items()):
+        ax = axs[:, i:i+1]
+        plot_dec_dict(comb_dict["decoding"], axs=ax, **kwargs)
+        ax[0, 0].set_title(m)
+    return axs
+
+            
 def plot_dec_dict(
         dec_dict,
         color_dict=None,
         axs=None,
         fwid=1,
-        plot_gen=False,
-        cond_groups=dec_cond_groups,
+        set_title=False,
+        y_label=None,
+        cond_groups=mra.dec_cond_groups,
+        plot_gen=True,
+        **kwargs,
 ):
     n_plots = len(cond_groups)
     n_regions = len(dec_dict)
@@ -381,28 +570,19 @@ def plot_dec_dict(
             figsize=(fwid*n_regions, fwid*n_plots),
             sharex=True,
             sharey=True,
+            squeeze=False,
         )
-    for j, (r, cond_dict) in enumerate(dec_dict.items()):
-        for i, (cond, ks) in enumerate(cond_groups.items()):
-            decs = []
-            gens = [] 
-            for k in ks:
-                res = cond_dict[k]
-                dec, xs = res[:2]
-                decs.append(dec)
-                if len(res) > 2:
-                    gen = res[-1]
-                    gens.append(gen)
-            dec = np.mean(decs, axis=(0, 2))
+    org_dict = _organize_dec_dict(dec_dict, cond_groups=cond_groups, **kwargs)
+    for j, (r, conds) in enumerate(org_dict.items()):
+        for i, (cond, (dec, xs, gen)) in enumerate(conds.items()):
             gpl.plot_trace_werr(
                 xs,
                 dec,
                 ax=axs[i, j],
                 color=color_dict.get(r),
-                conf95=True,
+                conf95=True,                
             )
-            if len(gens) > 0:
-                gen = np.mean(gens, axis=(0, 2))
+            if not np.all(np.isnan(gen)) and plot_gen:
                 gpl.plot_trace_werr(
                     xs,
                     gen,
@@ -410,10 +590,15 @@ def plot_dec_dict(
                     ls="dashed",
                     color=color_dict.get(r),
                     conf95=True,
+                    plot_outline=True
                 )
-            axs[i, j].set_title(r)
-            if j == 0:
+
+            if set_title:
+                axs[i, j].set_title(r)
+            if j == 0 and y_label is None:
                 axs[i, j].set_ylabel(cond)
+            elif y_label is not None:
+                axs[i, j].set_ylabel(y_label)
             gpl.add_hlines(0.5, axs[i, j])
     return axs
     
@@ -1413,11 +1598,25 @@ def plot_dec_gen_pred(pred_vals, dec_vals, x_val, ax=None, minor_tick=.2,
                    markerstyles=[symbol_list[2]])
 
 
-def plot_data_pred(pred_vals, dec_vals, n_feats=2, n_vals=2, axs=None,
-                   color=None, line_alpha=.2, label='', comp_pred=None):
-    if axs is None:
-        f, axs = plt.subplots(1, 3)
-    (ax_bin, ax_gen, ax_comb) = axs
+def plot_data_pred(
+        pred_vals,
+        dec_vals,
+        n_feats=2,
+        n_vals=2,
+        axs=None,
+        color=None,
+        line_alpha=.2,
+        label='',
+        comp_pred=None,
+        ax_bin=None,
+        ax_gen=None,
+        ax_comb=None,
+        print_differences=False,
+):
+    if axs is None and ax_bin is None and ax_gen is None and ax_comb is None:
+        f, axs = plt.subplots(1, 3)        
+    if axs is not None and len(axs) == 3:
+        (ax_bin, ax_gen, ax_comb) = axs
 
     dl = np.mean(pred_vals['d_l'][0, 0], axis=1)
     dn = np.mean(pred_vals['d_n'][0, 0], axis=1)
@@ -1430,7 +1629,7 @@ def plot_data_pred(pred_vals, dec_vals, n_feats=2, n_vals=2, axs=None,
 
     dn = np.sqrt(2)*dn
 
-    if comp_pred is not None:
+    if comp_pred is not None and print_differences:
         comp_ccgp = np.mean(comp_pred['pred_ccgp'][0, 0], axis=1, keepdims=True)
         comp_bind = np.mean(comp_pred['pred_bin'][0, 0], axis=1, keepdims=True)
         high, low = u.conf_interval(p_ccgp - comp_ccgp, withmean=True)[:, 0]
@@ -1449,30 +1648,34 @@ def plot_data_pred(pred_vals, dec_vals, n_feats=2, n_vals=2, axs=None,
     r1, bin_err = mrt.vector_corr_swap(pwr, n_feats, n_vals,  ts,
                                        sigma=sigma_m**2,
                                        sem=sem)
-    l = ax_gen.plot(r1, gen_err, color=color, alpha=line_alpha)
-    color = l[0].get_color()
-    ax_bin.plot(r1, bin_err, color=color, alpha=line_alpha)
 
     r_emp = np.expand_dims(dl**2/(dn**2 + dl**2 + sem**2), 1)
+    if ax_gen is not None:
+        l = ax_gen.plot(r1, gen_err, color=color, alpha=line_alpha)
+        color = l[0].get_color()
+        # ax_gen.plot(r_emp, 1 - p_ccgp, 'o', color=color)
+        gpl.plot_trace_werr(r_emp, 1 - p_ccgp, color=color, conf95=True, fill=False,
+                            points=True, ax=ax_gen, label=label)
+        # ax_gen.plot(r_emp, 1 - dec_gen, 'o', color=color)
+        gpl.plot_trace_werr(r_emp, 1 - dec_gen, color='k', ms=3, conf95=True, fill=False,
+                            points=True, ax=ax_gen)
+        gpl.plot_trace_werr(r_emp, 1 - dec_gen, color=color, conf95=True, fill=False,
+                            points=True, ax=ax_gen)
+        ax_gen.legend(frameon=False)
 
-    # ax_gen.plot(r_emp, 1 - p_ccgp, 'o', color=color)
-    gpl.plot_trace_werr(r_emp, 1 - p_ccgp, color=color, conf95=True, fill=False,
-                        points=True, ax=ax_gen, label=label)
-    # ax_gen.plot(r_emp, 1 - dec_gen, 'o', color=color)
-    gpl.plot_trace_werr(r_emp, 1 - dec_gen, color='k', ms=3, conf95=True, fill=False,
-                        points=True, ax=ax_gen)
-    gpl.plot_trace_werr(r_emp, 1 - dec_gen, color=color, conf95=True, fill=False,
-                        points=True, ax=ax_gen)
-    
-    gpl.plot_trace_werr(r_emp, 1 - p_bind, color=color, conf95=True, fill=False,
-                        points=True, ax=ax_bin)
-    # ax_bin.plot(r_emp, 1 - p_bind, 'o', color=color)
-    ax_comb.plot(gen_err, bin_err, color=color, alpha=line_alpha)
-    gpl.plot_trace_werr(1 - p_ccgp, 1 - p_bind, color=color, conf95=True,
-                        fill=False, points=True, ax=ax_comb)
-    # ax_comb.set_xscale('log')
-    # ax_comb.set_yscale('log')
-    ax_gen.legend(frameon=False)
+
+    if ax_bin is not None:
+        ax_bin.plot(r1, bin_err, color=color, alpha=line_alpha)
+        gpl.plot_trace_werr(r_emp, 1 - p_bind, color=color, conf95=True, fill=False,
+                            points=True, ax=ax_bin)
+        # ax_bin.plot(r_emp, 1 - p_bind, 'o', color=color)
+
+    if ax_comb is not None:
+        ax_comb.plot(gen_err, bin_err, color=color, alpha=line_alpha)
+        gpl.plot_trace_werr(1 - p_ccgp, 1 - p_bind, color=color, conf95=True,
+                            fill=False, points=True, ax=ax_comb)
+        # ax_comb.set_xscale('log')
+        # ax_comb.set_yscale('log')
     
 def plot_3d_fit(mus, ax=None, masks='time', colors=('r', 'g', 'b'),
                 cmap_name='PuOr'):

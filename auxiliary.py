@@ -31,10 +31,42 @@ region_monkey_dict = {
 }
 
 
+def load_monkey_region_runs(
+        *runinds,
+        folder="multiple_representations/decoding_cluster/",
+        template="decoding_m-(?P<monkey>[a-zA-Z]+)_(r-)?[A-Za-z]+_{runind}\.pkl",
+):
+    ris = "({})".format("|".join(runinds))
+    pattern = template.format(runind=ris)
+    out_dict = {}
+    for i, (_, gd, data) in enumerate(u.load_folder_regex_generator(folder, pattern)):
+        m_dict = out_dict.get(gd["monkey"], {})
+        for k, v in data.items():
+            k_dict = m_dict.get(k, {})
+            k_dict.update(v)
+            m_dict[k] = k_dict
+        print(m_dict.keys())
+        out_dict[gd["monkey"]] = m_dict
+    return out_dict
+    
+
+
+def load_monkey_decoding_runs(
+        runind,
+        folder="multiple_representations/decoding_cluster/",
+        template="decoding_m-(?P<monkey>[a-zA-Z]+)_(r-)?[A-Za-z]+_{runind}\.pkl",        
+):
+    pattern = template.format(runind=runind)
+    out_dict = {}
+    for i, (_, gd, data) in enumerate(u.load_folder_regex_generator(folder, pattern)):
+        out_dict[gd["monkey"]] = data 
+    return out_dict
+
+
 def load_decoding_runs(
         runind,
         folder="multiple_representations/decoding_cluster/",
-        template="decoding_[A-Za-z]+_{runind}\.pkl",
+        template="decoding_(m-[a-zA-Z]+_)?(r-)?[A-Za-z]+_{runind}\.pkl",
 ):
     pattern = template.format(runind=runind)
     for i, (_, _, data) in enumerate(u.load_folder_regex_generator(folder, pattern)):
