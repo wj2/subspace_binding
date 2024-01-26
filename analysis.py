@@ -1608,21 +1608,24 @@ def _compute_null_alignment_index(s1, s2, thresh=1e-10):
     return ais
 
 
-def _compute_alignment_index(s1, s2, thresh=1e-10, null=False):
-    ais = np.zeros(len(s1))
+def _compute_alignment_index(s1, s2, thresh=1e-10, null=False, dim=-1,):
+    ais = np.zeros((len(s1), s1.shape[dim]))
     for i, s1_i in enumerate(s1):
         s2_i = s2[i]
-        p1 = skd.PCA()
-        p1.fit(s1_i)
-        p2 = skd.PCA()
-        p2.fit(s2_i)
-        mask1 = p1.explained_variance_ratio_ > thresh
-        u1 = p1.components_[mask1].T
-        mask2 = p2.explained_variance_ratio_ > thresh
-        u2 = p2.components_[mask2].T
+        for j in range(s1.shape[dim]):
+            s1_ij = np.take(s1_i, j, axis=dim)
+            s2_ij = np.take(s2_i, j, axis=dim)
+            p1 = skd.PCA()
+            p1.fit(s1_ij)
+            p2 = skd.PCA()
+            p2.fit(s2_ij)
+            mask1 = p1.explained_variance_ratio_ > thresh
+            u1 = p1.components_[mask1].T
+            mask2 = p2.explained_variance_ratio_ > thresh
+            u2 = p2.components_[mask2].T
 
-        norm = min(u1.shape[1], u2.shape[1])
-        ais[i] = np.trace(u1.T @ u2 @ u2.T @ u1)/norm
+            norm = min(u1.shape[1], u2.shape[1])
+            ais[i, j] = np.trace(u1.T @ u2 @ u2.T @ u1)/norm
     return ais
     
 
