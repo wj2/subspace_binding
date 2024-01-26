@@ -50,6 +50,8 @@ if __name__ == '__main__':
 
     if "nominal" in plot_figs:
         f = mrf.SelectivityFigure(data=fig_data.get('selectivity-nom'))
+        f.panel_eg_neurons()
+        f.panel_model_comp(use_folder=args.lm_fits)
         f.panel_subspace_corr(recompute=False)
         fig_data['selectivity-nom'] = f.get_data()
         f.save(

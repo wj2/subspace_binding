@@ -230,10 +230,10 @@ class SelectivityFigure(MultipleRepFigure):
             self.data[key] = comp_dict
         return self.data[key]
         
-    def panel_model_comp(self):
+    def panel_model_comp(self, use_folder=None):
         key = "model_comp"
         axs = self.gss[key]
-        comp_dict = self._get_model_comp_data()
+        comp_dict = self._get_model_comp_data(use_folder=use_folder)
         ax_labels = ("noise", "linear", "interaction")
         use_regions = self.regions[:-1]
 
