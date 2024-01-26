@@ -715,8 +715,8 @@ class SelectivityFigure(MultipleRepFigure):
             for i, r in enumerate(self.regions):
                 monkeys = mraux.region_monkey_dict[r]
                 for use_m in monkeys:
-                    for i, ms in enumerate(ms_list):
-                        r_list[i][r][use_m] = self.compute_subspace_corr(
+                    for j, ms in enumerate(ms_list):
+                        r_list[j][r][use_m] = self.compute_subspace_corr(
                         ms,
                         r,
                         use_m,
@@ -758,35 +758,29 @@ class SelectivityFigure(MultipleRepFigure):
 
         if self.data.get(key_gen) is None or recompute:
             ms_on_dict = self.fit_subspace_models(tb_on, te_on)
+            ms_on_shuff = self.fit_subspace_models(tb_on, te_on, shuffle_targs=True)
             ms_delay_dict = self.fit_subspace_models(tb_delay, te_delay)
-            self.data[key_gen] = (ms_on_dict, ms_delay_dict)
-        out = self.data["subspace_corr"]
+            ms_delay_shuff = self.fit_subspace_models(
+                tb_delay, te_delay, shuffle_targs=True
+            )
+            self.data[key_gen] = (ms_on_dict, ms_on_shuff, ms_delay_dict, ms_delay_shuff)
+        ms_list = self.data[key_gen]
         model_combination = "weighted_sum"
         monkey = "all"
-        ms_on_dict, ms_delay_dict = out
         if self.data.get(key_spec) is None or recompute:
-            r_on_dict = {}
-            r_delay_dict = {}
+            r_list = list({r: {} for r in self.regions} for ms in ms_list)
             for i, r in enumerate(self.regions):
-                r_on_dict[r] = {}
-                r_delay_dict[r] = {}
-                r_on_dict[r][monkey] = self.compute_subspace_corr(
-                    ms_on_dict,
-                    r,
-                    monkey,
-                    model_combination=model_combination,
-                    use_folder=use_folder,
-                )
-                r_delay_dict[r][monkey] = self.compute_subspace_corr(
-                    ms_delay_dict,
-                    r,
-                    monkey,
-                    model_combination=model_combination,
-                    use_folder=use_folder,
-                )
-            self.data[key_spec] = (r_on_dict, r_delay_dict)
+                for j, ms in enumerate(ms_list):
+                    r_list[j][r][monkey] = self.compute_subspace_corr(
+                        ms,
+                        r,
+                        monkey,
+                        model_combination=model_combination,
+                        use_folder=use_folder,
+                    )
+            self.data[key_spec] = r_list
 
-        r_on, r_delay = self.data[key_spec]
+        r_on, r_on_shuff, r_delay, r_delay_shuff = self.data[key_spec]
         markers = {
             "Batman": {"markerstyles": "s"},
             "Calvin": {"markerstyles": "o"},
@@ -795,8 +789,10 @@ class SelectivityFigure(MultipleRepFigure):
             "Spock": {"markerstyles": "v"},
             "Vader": {"markerstyles": "D"},
         }
-        self.plot_subspace_corr(axs[0], r_on, style_dict=markers)
-        self.plot_subspace_corr(axs[1], r_delay, style_dict=markers, time="DELAY")
+        self.plot_subspace_corr(axs[0], r_on, style_dict=markers, shuff=r_on_shuff)
+        self.plot_subspace_corr(
+            axs[1], r_delay, style_dict=markers, shuff=r_delay_shuff, time="DELAY"
+        )
         if self.params.getboolean("use_nl_val"):
             y_label = "alignment index"
         else:
