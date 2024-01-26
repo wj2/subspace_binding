@@ -47,12 +47,15 @@ class MultipleRepFigure(pu.Figure):
             self.data["experimental_data"] = data.session_mask(session_mask)
         return self.data["experimental_data"]
 
-    def _get_gen_emp_pred(self):
-        folder = self.params.get("decoding_folder")
-        pred_file = self.params.get("pred_file")
-        dec_file = self.params.get("dec_file")
-        preds = sio.loadmat(os.path.join(folder, pred_file))
-        emp = sio.loadmat(os.path.join(folder, dec_file))
+    def _get_gen_emp_pred(self, dec_folder=None, pred_file=None, dec_file=None):
+        if dec_folder is None:
+            dec_folder = self.params.get("decoding_folder")
+        if pred_file is None:
+            pred_file = self.params.get("pred_file")
+        if dec_file is None:
+            dec_file = self.params.get("dec_file")
+        preds = sio.loadmat(os.path.join(dec_folder, pred_file))
+        emp = sio.loadmat(os.path.join(dec_folder, dec_file))
         return preds, emp
 
     def _make_color_dict(self, ks):
@@ -190,6 +193,7 @@ class SelectivityFigure(MultipleRepFigure):
                 scaler = skp.StandardScaler()
                 scaler.fit(targ)
                 targ = scaler.transform(targ)
+                print(pred.shape, targ.shape)
                 _, fits, diags = mra._make_dict_and_fit(pred, targ)
                 self.data[neur_key] = fits[0], scaler
 
@@ -2391,11 +2395,11 @@ class TheoryFigure(MultipleRepFigure):
             self.data[key] = out_prediction
         return self.data[key]
 
-    def panel_theory_comparison(self):
+    def panel_theory_comparison(self, **kwargs):
         key = "panel_theory_comparison"
         axs_inset = self.gss[key]
         
-        preds, decs = self._get_gen_emp_pred()
+        preds, decs = self._get_gen_emp_pred(**kwargs)
         regions = self.params.getlist("use_regions")
 
         normalize_dimensions = self.params.getboolean("normalize_dimensions")
@@ -2443,11 +2447,11 @@ class TheoryFigure(MultipleRepFigure):
             ax.set_xlabel("generalization\nerror rate")
         
 
-    def panel_theory_dec_plot(self):
+    def panel_theory_dec_plot(self, **kwargs):
         key = "panel_theory_dec_plot"
         axs_dists, axs = self.gss[key]
 
-        preds, decs = self._get_gen_emp_pred()
+        preds, decs = self._get_gen_emp_pred(**kwargs)
         regions = self.params.getlist("use_regions")
 
         normalize_dimensions = False
