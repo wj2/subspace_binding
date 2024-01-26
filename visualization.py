@@ -601,14 +601,90 @@ def plot_dec_dict(
                 axs[i, j].set_ylabel(y_label)
             gpl.add_hlines(0.5, axs[i, j])
     return axs
+
+
+def plot_current_past_regions_dict(
+        dec_run_dict,
+        color_dict=None,
+        axs=None,
+        fwid=2,
+        plot_regions=None,
+        t_ind=-1,
+        offset=.2,
+):
+    n_plots = 2
+    n_times = 2
+    dec_dict = dec_run_dict["decoding"]
+    timing_dict = dec_run_dict["timing"]
+    if color_dict is None:
+        color_dict = {}
+    if axs is None:
+        f, axs = plt.subplots(
+            n_plots,
+            n_times,
+            figsize=(fwid*n_times, fwid*n_plots),
+            sharex=True,
+            sharey=True,
+        )
+    if plot_regions is None:
+        plot_regions = dec_dict.keys()
+        
+    o1_to_o2_key = ('subj_ev offer 1', 'subj_ev offer 2')
+    o2_to_o1_key = ('subj_ev offer 2', 'subj_ev offer 1')
     
+    o1_time_o2o1_key = (('subj_ev offer 1', 'Offer 2 on'),
+                        ('subj_ev offer 1', 'Offer 1 on'))
+    for i, region in enumerate(plot_regions):
+        dec, xs, gen = dec_dict[region][o1_to_o2_key]
+        gpl.violinplot(
+            [np.mean(dec, axis=1)[..., t_ind]],
+            [i - offset/2],
+            color=color_dict.get(region),
+            ax=axs[0, 0],
+        )
+        gpl.violinplot(
+            [np.mean(gen, axis=1)[..., t_ind]],
+            [i + offset/2],
+            color=color_dict.get(region),
+            ax=axs[0, 1],
+        )
+        dec, xs, gen = dec_dict[region][o2_to_o1_key]
+        gpl.violinplot(
+            [np.mean(dec, axis=1)[..., t_ind]],
+            [i - offset/2],
+            color=color_dict.get(region),
+            ax=axs[0, 1],
+        )
+        gpl.violinplot(
+            [np.mean(gen, axis=1)[..., t_ind]],
+            [i + offset/2],
+            color=color_dict.get(region),
+            ax=axs[0, 0],
+        )
+
+        dec, xs, gen = timing_dict[region][o1_time_o2o1_key]
+        gpl.violinplot(
+            [np.mean(dec, axis=1)[..., t_ind]],
+            [i - offset/2],
+            color=color_dict.get(region),
+            ax=axs[1, 1],
+        )
+        gpl.violinplot(
+            [np.mean(gen, axis=1)[..., t_ind]],
+            [i + offset/2],
+            color=color_dict.get(region),
+            ax=axs[1, 0],
+        )
+    for i, j in u.make_array_ind_iterator(axs.shape):
+        gpl.add_hlines(.5, axs[i, j])
+        gpl.clean_plot(axs[i, j], j)
+
 
 def plot_current_past_dict(
         dec_run_dict,
         color_dict=None,
         axs=None,
         fwid=2,
-        plot_gen=False,
         plot_regions=None,
 ):
     n_plots = 2

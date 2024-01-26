@@ -431,8 +431,8 @@ class SelectivityFigure(MultipleRepFigure):
             "offer 2": 0,
             "full": .2
         }
-        for k, r_dict in r_group_dict.items():
-            r_on, r_on_shuff, r_delay, r_delay_shuff = self.data[key_spec]
+        for k, r_list in r_group_dict.items():
+            r_on, r_on_shuff, r_delay, r_delay_shuff = r_list
             self.plot_subspace_corr(
                 axs[0],
                 r_on,
@@ -2105,6 +2105,17 @@ class DecodingCurrentPastFigure(MultipleRepFigure):
             self.data[key] = comb_dict
         comb_dict = self.data[key]
         mrv.plot_current_past_dict(comb_dict, plot_regions=(eg_region,), axs=axs)
+
+    def panel_regions(self, reload=False):
+        key = "panel_regions"
+        axs = self.gss[key]
+        
+        ri = self.params.get("regions_run_ind")
+        if self.data.get(key) is None or reload:
+            comb_dict = mraux.load_decoding_runs(ri)
+            self.data[key] = comb_dict
+        comb_dict = self.data[key]
+        mrv.plot_current_past_regions_dict(comb_dict, axs=axs)
 
         
 class DecodingTCFigure(MultipleRepFigure):
