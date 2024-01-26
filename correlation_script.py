@@ -29,6 +29,8 @@ def create_parser():
     parser.add_argument("--data_field", default="subj_ev", type=str)
     parser.add_argument("--jobid", default="0000", type=str)
     parser.add_argument("--fig_ind", default=None, type=int)
+    default_fit_folder = "../results/subspace_binding/lm_fits/"
+    parser.add_argument("--lm_fits", default=default_fit_folder, type=int)
     return parser
 
 if __name__ == '__main__':

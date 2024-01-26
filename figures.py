@@ -220,9 +220,12 @@ class SelectivityFigure(MultipleRepFigure):
         axs[0, 0].set_ylabel("spikes/s")
         axs[0, 1].set_ylabel("spikes/s")
 
-    def _get_model_comp_data(self, key="model_comp"):
+    def _get_model_comp_data(self, key="model_comp", use_folder=None):
         if self.data.get(key) is None:
-            fit_folder = self.params.get("fit_folder")
+            if use_folder is None:
+                fit_folder = self.params.get("fit_folder")
+            else:
+                fit_folder = use_folder
             _, comp_dict = mraux.load_many_fits(fit_folder)
             self.data[key] = comp_dict
         return self.data[key]
@@ -510,9 +513,10 @@ class SelectivityFigure(MultipleRepFigure):
             discretize_value=False,
             single_time=True,
             out_sessions=None,
+            use_folder=None,
     ):
         if model_combination == "weighted_sum":
-            comp_dict = self._get_model_comp_data()
+            comp_dict = self._get_model_comp_data(use_folder=use_folder)
         else:
             comp_dict = None
 
@@ -744,7 +748,7 @@ class SelectivityFigure(MultipleRepFigure):
         axs[1].spines["bottom"].set_visible(False)
         gpl.clean_plot_bottom(axs[0])
         
-    def panel_subspace_corr_model_mix(self, recompute=False):
+    def panel_subspace_corr_model_mix(self, recompute=False, use_folder=None):
         key_gen = "subspace_corr"
         key_spec = "subspace_corr_model_mix"
         axs = self.gss[key_gen]
@@ -769,16 +773,18 @@ class SelectivityFigure(MultipleRepFigure):
                 r_on_dict[r] = {}
                 r_delay_dict[r] = {}
                 r_on_dict[r][monkey] = self.compute_subspace_corr(
-                        ms_on_dict,
-                        r,
-                        monkey,
-                        model_combination=model_combination,
+                    ms_on_dict,
+                    r,
+                    monkey,
+                    model_combination=model_combination,
+                    use_folder=use_folder,
                 )
                 r_delay_dict[r][monkey] = self.compute_subspace_corr(
-                        ms_delay_dict,
-                        r,
-                        monkey,
-                        model_combination=model_combination,
+                    ms_delay_dict,
+                    r,
+                    monkey,
+                    model_combination=model_combination,
+                    use_folder=use_folder,
                 )
             self.data[key_spec] = (r_on_dict, r_delay_dict)
 
