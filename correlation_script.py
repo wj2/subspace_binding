@@ -86,7 +86,7 @@ if __name__ == '__main__':
     
     if "model_mix" in plot_figs:
         f = mrf.SelectivityFigure(data=fig_data.get('selectivity-mix'))
-        f.panel_subspace_corr_model_mix(recompute=False)
+        f.panel_subspace_corr_model_mix(recompute=False, use_folder=args.lm_fits)
         fig_data['selectivity-mix'] = f.get_data()
         f.save(
             'selectivity-mix_fig_{jobid}.svg'.format(jobid=args.jobid),

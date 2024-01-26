@@ -1774,7 +1774,7 @@ class CombinedRepFigure(MultipleRepFigure):
                     u_rs=regions_all,
                     minor=minors[j],
                 )
-
+        return f
 
     def panel_dec_bhv(self, force_reload=False, recompute=False):
         key = "panel_dec_bhv"
