@@ -69,7 +69,7 @@ if __name__ == '__main__':
             panel_str=panel_str, jobid=args.jobid
         )
         path = os.path.join(args.output_folder, fn)
-        f_additional.save(path, bbox_inches="tight", transparent=True)
+        f_additional.savefig(path, bbox_inches="tight", transparent=True)
 
     fig_data[fig_key] = cr_fig.get_data()        
 

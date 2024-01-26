@@ -2152,14 +2152,14 @@ class DecodingCurrentPastFigure(MultipleRepFigure):
 
         gs_tc = pu.make_mxn_gridspec(
             self.gs, n_targs, n_times,
-            0, 100, 0, 45, 5, 5
+            0, 100, 0, 45, 5, 2
         )
         axs_tc = self.get_axs(gs_tc, sharey="all", sharex="all")
         gss["panel_dec_tc"] = axs_tc
 
         gs_regions = pu.make_mxn_gridspec(
             self.gs, n_targs, n_times,
-            0, 100, 50, 100, 5, 5
+            0, 100, 52, 100, 5, 2
         )
         axs_regions = self.get_axs(gs_regions, sharey="all", sharex="all")
         gss["panel_regions"] = axs_regions

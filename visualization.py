@@ -603,6 +603,77 @@ def plot_dec_dict(
     return axs
 
 
+
+def pt_dec_func(
+        dec,
+        gen,
+        dec_ax,
+        gen_ax,
+        offset=0,
+        i=0,
+        color=None,
+        t_ind=-1,
+        **kwargs,
+):
+    dec = dec[:, t_ind]
+    gen = gen[:, t_ind]
+    gpl.violinplot(
+        [dec],
+        [i - offset/2],
+        color=[color],
+        ax=dec_ax,
+    )
+    gpl.violinplot(
+        [gen],
+        [i + offset/2],
+        color=[color],
+        ax=gen_ax,
+        plot_outline=True,
+        markersize=3
+    )
+
+def tc_dec_func(
+        dec,
+        gen,
+        dec_ax,
+        gen_ax,
+        color=None,
+        xs=None,
+        **kwargs,
+):
+    gpl.plot_trace_werr(
+        xs,
+        dec,
+        color=color,
+        ax=dec_ax,
+        conf95=True,
+    )
+    gpl.plot_trace_werr(
+        xs,
+        gen, 
+        color=color,
+        ax=gen_ax,
+        ls="dashed",
+        conf95=True,
+        plot_outline=True,
+    )
+
+
+def plot_current_past_dict(
+        *args, **kwargs,
+):
+    axs = plot_current_past_regions_dict(
+        *args,
+        **kwargs,
+        plot_func=tc_dec_func,
+        print_stats=False,
+        set_xticks=False,
+    )
+    for i in range(axs.shape[1]):
+        axs[-1, i].set_xlabel("time from offer {} onset".format(i + 1))
+    return axs
+
+
 def plot_current_past_regions_dict(
         dec_run_dict,
         color_dict=None,
@@ -611,6 +682,10 @@ def plot_current_past_regions_dict(
         plot_regions=None,
         t_ind=-1,
         offset=.2,
+        plot_func=pt_dec_func,
+        print_stats=True,
+        set_xticks=True,
+        x_label="",
 ):
     n_plots = 2
     n_times = 2
@@ -629,177 +704,66 @@ def plot_current_past_regions_dict(
     if plot_regions is None:
         plot_regions = dec_dict.keys()
         
-    o1_to_o2_key = ('subj_ev offer 1', 'subj_ev offer 2')
-    o2_to_o1_key = ('subj_ev offer 2', 'subj_ev offer 1')
-    
-    o1_time_o2o1_key = (('subj_ev offer 1', 'Offer 2 on'),
-                        ('subj_ev offer 1', 'Offer 1 on'))
+    plot_keys = {
+        ("decoding offer 1", "gen from offer 1 to 2"): (
+            ('subj_ev offer 1', 'subj_ev offer 2'),
+            dec_dict,
+            (axs[0, 0], axs[0, 1]),
+        ),
+        ("decoding offer 2", "gen from offer 2 to 1"): (
+            ('subj_ev offer 2', 'subj_ev offer 1'),
+            dec_dict,
+            (axs[0, 1], axs[0, 0]),
+        ),
+        ("decoding offer 1 during time 2", "gen from time 2 to 1"): (
+            (('subj_ev offer 1', 'Offer 2 on'),
+             ('subj_ev offer 1', 'Offer 1 on')),
+            timing_dict,
+            (axs[1, 1], axs[1, 0]),
+        ),
+        ("decoding offer 1 during time 1", "gen from time 1 to 2"): (
+            (('subj_ev offer 1', 'Offer 1 on'),
+             ('subj_ev offer 1', 'Offer 2 on')),
+            timing_dict,
+            (axs[1, 0], axs[1, 1]),
+        )
+    }
     for i, region in enumerate(plot_regions):
-        dec, xs, gen = dec_dict[region][o1_to_o2_key]
-        dec = np.mean(dec, axis=1)[..., t_ind]
-        gen = np.mean(gen, axis=1)[..., t_ind]
-        print(u.make_stat_string(
-            "{}, decoding offer 1: {{:.2f}} - {{:.2f}}".format(region),
-            dec,
-        ))
-        print(u.make_stat_string(
-            "{}, gen from offer 1 to 2: {{:.2f}} - {{:.2f}}".format(region),
-            gen,
-        ))
-        gpl.violinplot(
-            [dec],
-            [i - offset/2],
-            color=[color_dict.get(region)],
-            ax=axs[0, 0],
-        )
-        gpl.violinplot(
-            [gen],
-            [i + offset/2],
-            color=[color_dict.get(region)],
-            ax=axs[0, 1],
-        )
-        
-        dec, xs, gen = dec_dict[region][o2_to_o1_key]
-        dec = np.mean(dec, axis=1)[..., t_ind]
-        gen = np.mean(gen, axis=1)[..., t_ind]
-        print(u.make_stat_string(
-            "{}, decoding offer 2: {{:.2f}} - {{:.2f}}".format(region),
-            dec,
-        ))
-        print(u.make_stat_string(
-            "{}, gen from offer 2 to 1: {{:.2f}} - {{:.2f}}".format(region),
-            gen,
-        ))
-        gpl.violinplot(
-            [dec],
-            [i - offset/2],
-            color=[color_dict.get(region)],
-            ax=axs[0, 1],
-        )
-        gpl.violinplot(
-            [gen],
-            [i + offset/2],
-            color=[color_dict.get(region)],
-            ax=axs[0, 0],
-        )
-
-        dec, xs, gen = timing_dict[region][o1_time_o2o1_key]
-        dec = np.mean(dec, axis=1)[..., t_ind]
-        gen = np.mean(gen, axis=1)[..., t_ind]
-        print(u.make_stat_string(
-            "{}, decoding offer 1 during time 2: {{:.2f}} - {{:.2f}}".format(region),
-            dec,
-        ))
-        print(u.make_stat_string(
-            "{}, gen from time 2 to 1: {{:.2f}} - {{:.2f}}".format(region),
-            gen,
-        ))
-        gpl.violinplot(
-            [dec],
-            [i - offset/2],
-            color=[color_dict.get(region)],
-            ax=axs[1, 1],
-        )
-        gpl.violinplot(
-            [gen],
-            [i + offset/2],
-            color=[color_dict.get(region)],
-            ax=axs[1, 0],
-        )
+        for (dec_text, gen_text), (key, use_dict, (dec_ax, gen_ax)) in plot_keys.items():
+            dec, xs, gen = use_dict[region][key]
+            dec = np.mean(dec, axis=1)
+            gen = np.mean(gen, axis=1)
+            if print_stats:
+                print(u.make_stat_string(
+                    "{}, {}: {{:.2f}} - {{:.2f}}".format(region, dec_text),
+                    dec,
+                ))
+                print(u.make_stat_string(
+                    "{}, {}: {{:.2f}} - {{:.2f}}".format(region, gen_text),
+                    gen,
+                ))
+            plot_func(
+                dec,
+                gen,
+                dec_ax,
+                gen_ax,
+                offset=offset,
+                i=i,
+                xs=xs,
+                color=color_dict.get(region),
+            )
     for i, j in u.make_array_ind_iterator(axs.shape):
         gpl.add_hlines(.5, axs[i, j])
         gpl.clean_plot(axs[i, j], j)
-        if i == axs.shape[0] - 1:
+        if j == 0:
+            axs[i, j].set_ylabel("decoding performance")
+        if i == axs.shape[0] - 1 and set_xticks:
             axs[i, j].set_xticks(range(len(plot_regions)))
-            axs[i, j].set_xticklabels(plot_regions)
+            axs[i, j].set_xticklabels(plot_regions, rotation=45)
+        if i == axs.shape[0] - 1:
+            axs[i, j].set_xlabel(x_label)
+    return axs
             
-
-def plot_current_past_dict(
-        dec_run_dict,
-        color_dict=None,
-        axs=None,
-        fwid=2,
-        plot_regions=None,
-):
-    n_plots = 2
-    n_regions = 2
-    dec_dict = dec_run_dict["decoding"]
-    timing_dict = dec_run_dict["timing"]
-    if color_dict is None:
-        color_dict = {}
-    if axs is None:
-        f, axs = plt.subplots(
-            n_regions,
-            n_plots,
-            figsize=(fwid*n_regions, fwid*n_plots),
-            sharex=True,
-            sharey=True,
-        )
-    if plot_regions is None:
-        plot_regions = dec_dict.keys()
-        
-    o1_to_o2_key = ('subj_ev offer 1', 'subj_ev offer 2')
-    o2_to_o1_key = ('subj_ev offer 2', 'subj_ev offer 1')
-    
-    o1_time_o2o1_key = (('subj_ev offer 1', 'Offer 2 on'),
-                        ('subj_ev offer 1', 'Offer 1 on'))
-    for i, region in enumerate(plot_regions):
-        dec, xs, gen = dec_dict[region][o1_to_o2_key]
-        gpl.plot_trace_werr(
-            xs,
-            np.mean(dec, axis=1),
-            color=color_dict.get(region),
-            ax=axs[0, 0],
-            conf95=True,
-        )
-        gpl.plot_trace_werr(
-            xs,
-            np.mean(gen, axis=1),
-            color=color_dict.get(region),
-            ax=axs[0, 1],
-            ls="dashed",
-            conf95=True,
-            plot_outline=True,
-        )
-        dec, xs, gen = dec_dict[region][o2_to_o1_key]
-        gpl.plot_trace_werr(
-            xs,
-            np.mean(dec, axis=1),
-            color=color_dict.get(region),
-            ax=axs[0, 1],
-            conf95=True,
-        )
-        gpl.plot_trace_werr(
-            xs,
-            np.mean(gen, axis=1),
-            color=color_dict.get(region),
-            ax=axs[0, 0],
-            ls="dashed",
-            conf95=True,
-            plot_outline=True,
-        )
-
-        dec, xs, gen = timing_dict[region][o1_time_o2o1_key]
-        gpl.plot_trace_werr(
-            xs,
-            np.mean(dec, axis=1),
-            color=color_dict.get(region),
-            ax=axs[1, 1],
-            conf95=True,
-        )
-        gpl.plot_trace_werr(
-            xs,
-            np.mean(gen, axis=1),
-            color=color_dict.get(region),
-            ax=axs[1, 0],
-            ls="dashed",
-            conf95=True,
-            plot_outline=True,
-        )
-        for i, j in u.make_array_ind_iterator(axs.shape):
-            gpl.add_hlines(.5, axs[i, j])
-            gpl.clean_plot(axs[i, j], j)
-
 
 region_list = ('OFC', 'PCC', 'pgACC', 'VS', 'vmPFC')
 def print_all_region_stats(data, region_list=region_list, **kwargs):
