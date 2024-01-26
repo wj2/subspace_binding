@@ -63,6 +63,29 @@ def load_monkey_decoding_runs(
     return out_dict
 
 
+def make_decoding_run_db(
+        folder="multiple_representations/decoding_cluster/",
+        template="decoding_(m-[a-zA-Z]+_)?(r-)?[A-Za-z]+_{runind}\.pkl",
+        runind_pattern="[0-9]+",
+):
+    pattern = template.format(runind=runind_pattern)
+    keys_all = []
+    args_all = []
+    for i, (_, _, data) in enumerate(u.load_folder_regex_generator(folder, pattern)):
+        args = data["args"]
+        keys_all.extend(list(args.keys()))
+        args_all.append(args)
+    uk = np.unique(keys_all)
+    full_dict = {}
+    for arg in args_all:
+        for k in uk:
+            k_list = full_dict.get(k, [])
+            k_list.append(arg.get(k))
+            full_dict[k] = k_list
+    return pd.DataFrame(full_dict)
+    
+
+
 def load_decoding_runs(
         runind,
         folder="multiple_representations/decoding_cluster/",

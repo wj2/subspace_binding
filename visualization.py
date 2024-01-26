@@ -71,7 +71,7 @@ def plot_split_halfs_full(fit_dict, pred_func, ax=None, use_regions=None,
     inter2 = np.concatenate(list(v[1][1] for (r, _, _), v in fit_dict.items()
                                  if r[0] in use_regions),
                             axis=1)
-
+    
     # side 1 and side 2 for models 1
     stim11_o1, stim12_o1 = mra._get_stim_reps(mat1, inter1, pred_func, n_pts=n_pts,
                                           zero_preds=zp1, **kwargs)
@@ -84,13 +84,13 @@ def plot_split_halfs_full(fit_dict, pred_func, ax=None, use_regions=None,
     stim21_o2, stim22_o2 = mra._get_stim_reps(mat2, inter2, pred_func, n_pts=n_pts,
                                           zero_preds=zp2, **kwargs)
 
-    rs_wi_d = align_func(stim11_o2, stim12_o2)
+    rs_wi_d = align_func(stim11_o2, stim12_o2, dim=-2)
     # rs_wi1 = align_func(stim11_o1, stim11_o2)
     # rs_wi2 = align_func(stim12_o1, stim12_o2)
-    rs_wi1 = align_func(stim11_o1, stim12_o2)
-    rs_wi2 = align_func(stim12_o1, stim11_o2)
-    rs_ac1 = align_func(stim11_o1, stim21_o1)
-    rs_ac2 = align_func(stim12_o2, stim22_o2)
+    rs_wi1 = align_func(stim11_o1, stim12_o2, dim=-2)
+    rs_wi2 = align_func(stim12_o1, stim11_o2, dim=-2)
+    rs_ac1 = align_func(stim11_o1, stim21_o1, dim=-2)
+    rs_ac2 = align_func(stim12_o2, stim22_o2, dim=-2)
     rs_wi = np.mean((rs_wi1, rs_wi2), axis=0)
 
     # rs_wi_d = np.mean((rs_wi_d1, rs_wi_d2), axis=0)
@@ -100,11 +100,11 @@ def plot_split_halfs_full(fit_dict, pred_func, ax=None, use_regions=None,
         rs_wi = 2*rs_wi/(1 + rs_wi)
         rs_ac = 2*rs_ac/(1 + rs_ac)
 
-    gpl.violinplot(np.expand_dims(rs_wi, 0), [wi_pt], color=[wi_color],
+    gpl.violinplot([rs_wi[:, 0]], [wi_pt], color=[wi_color],
                    ax=ax, showextrema=False, showmedians=True)
     # gpl.violinplot(np.expand_dims(rs_wi_d, 0), [wi_d_pt], color=[wi_color],
     #                ax=ax, showextrema=False, showmedians=True)
-    gpl.violinplot(np.expand_dims(rs_ac, 0), [ac_pt], color=[ac_color],
+    gpl.violinplot([rs_ac[:, 0]], [ac_pt], color=[ac_color],
                    ax=ax, showextrema=False, showmedians=True)
 
 
@@ -636,41 +636,72 @@ def plot_current_past_regions_dict(
                         ('subj_ev offer 1', 'Offer 1 on'))
     for i, region in enumerate(plot_regions):
         dec, xs, gen = dec_dict[region][o1_to_o2_key]
+        dec = np.mean(dec, axis=1)[..., t_ind]
+        gen = np.mean(gen, axis=1)[..., t_ind]
+        print(u.make_stat_string(
+            "{}, decoding offer 1: {{:.2f}} - {{:.2f}}".format(region),
+            dec,
+        ))
+        print(u.make_stat_string(
+            "{}, gen from offer 1 to 2: {{:.2f}} - {{:.2f}}".format(region),
+            gen,
+        ))
         gpl.violinplot(
-            [np.mean(dec, axis=1)[..., t_ind]],
+            [dec],
             [i - offset/2],
             color=[color_dict.get(region)],
             ax=axs[0, 0],
         )
         gpl.violinplot(
-            [np.mean(gen, axis=1)[..., t_ind]],
+            [gen],
             [i + offset/2],
             color=[color_dict.get(region)],
             ax=axs[0, 1],
         )
+        
         dec, xs, gen = dec_dict[region][o2_to_o1_key]
+        dec = np.mean(dec, axis=1)[..., t_ind]
+        gen = np.mean(gen, axis=1)[..., t_ind]
+        print(u.make_stat_string(
+            "{}, decoding offer 2: {{:.2f}} - {{:.2f}}".format(region),
+            dec,
+        ))
+        print(u.make_stat_string(
+            "{}, gen from offer 2 to 1: {{:.2f}} - {{:.2f}}".format(region),
+            gen,
+        ))
         gpl.violinplot(
-            [np.mean(dec, axis=1)[..., t_ind]],
+            [dec],
             [i - offset/2],
             color=[color_dict.get(region)],
             ax=axs[0, 1],
         )
         gpl.violinplot(
-            [np.mean(gen, axis=1)[..., t_ind]],
+            [gen],
             [i + offset/2],
             color=[color_dict.get(region)],
             ax=axs[0, 0],
         )
 
         dec, xs, gen = timing_dict[region][o1_time_o2o1_key]
+        dec = np.mean(dec, axis=1)[..., t_ind]
+        gen = np.mean(gen, axis=1)[..., t_ind]
+        print(u.make_stat_string(
+            "{}, decoding offer 1 during time 2: {{:.2f}} - {{:.2f}}".format(region),
+            dec,
+        ))
+        print(u.make_stat_string(
+            "{}, gen from time 2 to 1: {{:.2f}} - {{:.2f}}".format(region),
+            gen,
+        ))
         gpl.violinplot(
-            [np.mean(dec, axis=1)[..., t_ind]],
+            [dec],
             [i - offset/2],
             color=[color_dict.get(region)],
             ax=axs[1, 1],
         )
         gpl.violinplot(
-            [np.mean(gen, axis=1)[..., t_ind]],
+            [gen],
             [i + offset/2],
             color=[color_dict.get(region)],
             ax=axs[1, 0],

@@ -425,8 +425,8 @@ class SelectivityFigure(MultipleRepFigure):
         r_group_dict = self.data[key_spec]
         null_color = self.params.getcolor("null_corr_color")
         style_kw = {
-            "offer 1": {"markerstyles": "o"},
-            "offer 2": {"markerstyles": "s"},
+            "offer 1": {"all": {"markerstyles": "o"}},
+            "offer 2": {"all": {"markerstyles": "s"}},
             # "full": {"markerstyles": "s"},
         }
         offsets = {
@@ -436,6 +436,7 @@ class SelectivityFigure(MultipleRepFigure):
         }
         for k, r_list in r_group_dict.items():
             r_on, r_on_shuff, r_delay, r_delay_shuff = r_list
+            print(k)
             self.plot_subspace_corr(
                 axs[0],
                 r_on,
@@ -650,6 +651,7 @@ class SelectivityFigure(MultipleRepFigure):
             )
         else:
             ax = self.gss[key_ax][0]
+            f = None
         tc_start = self.params.getint("tc_tbeg")
         tc_end = self.params.getint("tc_tend")
         twin = self.params.getint("tc_winsize")
@@ -687,7 +689,7 @@ class SelectivityFigure(MultipleRepFigure):
         axs[0].set_ylabel(y_label)
         if not new_axes:
             gpl.clean_plot_bottom(axs[0])
-
+        return f
         
     def panel_subspace_corr_monkey(self, recompute=False):
         key_gen = "subspace_corr"
@@ -701,33 +703,28 @@ class SelectivityFigure(MultipleRepFigure):
 
         if self.data.get(key_gen) is None or recompute:
             ms_on_dict = self.fit_subspace_models(tb_on, te_on)
+            ms_on_shuff = self.fit_subspace_models(tb_on, te_on, shuffle_targs=True)
             ms_delay_dict = self.fit_subspace_models(tb_delay, te_delay)
-            self.data[key_gen] = (ms_on_dict, ms_delay_dict)
-        out = self.data["subspace_corr"]
-        ms_on_dict, ms_delay_dict = out
+            ms_delay_shuff = self.fit_subspace_models(
+                tb_delay, te_delay, shuffle_targs=True
+            )
+            self.data[key_gen] = (ms_on_dict, ms_on_shuff, ms_delay_dict, ms_delay_shuff)
+        ms_list = self.data["subspace_corr"]
         if self.data.get(key_spec) is None or recompute:
-            r_on_dict = {}
-            r_delay_dict = {}
+            r_list = list({r: {} for r in self.regions} for ms in ms_list)
             for i, r in enumerate(self.regions):
                 monkeys = mraux.region_monkey_dict[r]
-                r_on_dict[r] = {}
-                r_delay_dict[r] = {}
                 for use_m in monkeys:
-                    r_on_dict[r][use_m] = self.compute_subspace_corr(
-                        ms_on_dict,
+                    for i, ms in enumerate(ms_list):
+                        r_list[i][r][use_m] = self.compute_subspace_corr(
+                        ms,
                         r,
                         use_m,
                         model_combination="interaction",
                     )
-                    r_delay_dict[r][use_m] = self.compute_subspace_corr(
-                        ms_delay_dict,
-                        r,
-                        use_m,
-                        model_combination="interaction",
-                    )
-            self.data[key_spec] = (r_on_dict, r_delay_dict)
+            self.data[key_spec] = r_list
 
-        r_on, r_delay = self.data[key_spec]
+        r_on, r_on_shuff, r_delay, r_delay_shuff = self.data[key_spec]
         markers = {
             "Batman": {"markerstyles": "s"},
             "Calvin": {"markerstyles": "o"},
@@ -736,8 +733,10 @@ class SelectivityFigure(MultipleRepFigure):
             "Spock": {"markerstyles": "v"},
             "Vader": {"markerstyles": "D"},
         }
-        self.plot_subspace_corr(axs[0], r_on, style_dict=markers)
-        self.plot_subspace_corr(axs[1], r_delay, style_dict=markers, time="DELAY")
+        self.plot_subspace_corr(axs[0], r_on, style_dict=markers, shuff=r_on_shuff)
+        self.plot_subspace_corr(
+            axs[1], r_delay, style_dict=markers, shuff=r_delay_shuff, time="DELAY"
+        )
         if self.params.getboolean("use_nl_val"):
             y_label = "alignment index"
         else:
@@ -1523,6 +1522,7 @@ class CombinedRepFigure(MultipleRepFigure):
         gss['panel_dec_bhv'] = dec_bhv_axs
         self.gss = gss
 
+    # combined rep fig
     def panel_subspace_corr(self, recompute=False):
         key = "subspace_corr"
         ax = self.gss[key]
@@ -1547,7 +1547,7 @@ class CombinedRepFigure(MultipleRepFigure):
                 transform_value=use_nl_val,
                 single_time=True,
             )
-            boots_full = mra.fit_bootstrap_models(out_sessions)
+            boots_full = mra.fit_bootstrap_models(out_sessions[0])
 
             out_sessions = mra.make_predictor_matrices(
                 data,
@@ -1556,7 +1556,7 @@ class CombinedRepFigure(MultipleRepFigure):
                 transform_value=use_nl_val,
                 t1_only=True,
             )
-            boots_t1 = mra.fit_bootstrap_models(out_sessions)
+            boots_t1 = mra.fit_bootstrap_models(out_sessions[0])
 
             self.data[key] = (boots_full, boots_t1)
 

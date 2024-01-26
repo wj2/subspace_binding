@@ -59,12 +59,11 @@ if __name__ == '__main__':
     
     if "timecourse" in plot_figs:
         f = mrf.SelectivityFigure(data=fig_data.get('selectivity-tc'))
-        f.panel_subspace_corr_tc(recompute=False)
+        new_f = f.panel_subspace_corr_tc(recompute=False)
         fig_data['selectivity-tc'] = f.get_data()
-        f.save(
-            'selectivity-tc_fig_{jobid}.svg'.format(jobid=args.jobid),
-            use_bf=args.output_folder,
-        )
+        fn = 'selectivity-tc_fig_{jobid}.svg'.format(jobid=args.jobid), 
+        path = os.path.join(args.output_folder, fn)
+        new_f.save(path, bbox_inches="tight", transparent=True)
     
     if "time" in plot_figs:
         f = mrf.SelectivityFigure(data=fig_data.get('selectivity-time'))
