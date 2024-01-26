@@ -1608,7 +1608,7 @@ def _compute_null_alignment_index(s1, s2, thresh=1e-10):
     return ais
 
 
-def _compute_alignment_index(s1, s2, thresh=1e-10, null=False, dim=-1,):
+def _compute_alignment_index(s1, s2, thresh=1e-10, null=False, dim=-1, full_data=None):
     ais = np.zeros((len(s1), s1.shape[dim]))
     for i, s1_i in enumerate(s1):
         s2_i = s2[i]
