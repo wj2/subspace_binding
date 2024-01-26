@@ -439,15 +439,15 @@ class SelectivityFigure(MultipleRepFigure):
             self.plot_subspace_corr(
                 axs[0],
                 r_on,
-                style_dict=style_kw[k],
+                style_dict=style_kw.get(k),
                 shuff=r_on_shuff,
-                offset=offsets[k],
+                offset=offsets.get(k, 0),
             )
             self.plot_subspace_corr(
                 axs[1],
                 r_delay,
-                offset=offsets[k],
-                style_dict=style_kw[k],
+                offset=offsets.get(k, 0),
+                style_dict=style_kw.get(k),
                 shuff=r_delay_shuff,
                 time="DELAY",
             )
@@ -511,7 +511,6 @@ class SelectivityFigure(MultipleRepFigure):
             monkey,
             model_combination="interaction",
             discretize_value=False,
-            single_time=True,
             out_sessions=None,
             use_folder=None,
     ):
@@ -1524,6 +1523,77 @@ class CombinedRepFigure(MultipleRepFigure):
         gss['panel_dec_bhv'] = dec_bhv_axs
         self.gss = gss
 
+    def panel_subspace_corr(self, recompute=False):
+        key = "subspace_corr"
+        ax = self.gss[key]
+        data = self.get_exper_data()
+        tb = self.params.getint("tbeg")
+        te = self.params.getint("tend")
+        regions = self.params.getlist('use_regions')
+
+        use_nl_val = self.params.getboolean("use_nl_value")
+        if use_nl_val:
+            align_func = mra.compute_alignment_index
+            pred_func = mra.interaction_spline_pred
+        else:
+            align_func = mra.compute_corr
+            pred_func = mra.interaction_pred
+
+        if self.data.get(key) is None or recompute:
+            out_sessions = mra.make_predictor_matrices(
+                data,
+                t_beg=tb,
+                t_end=te,
+                transform_value=use_nl_val,
+                single_time=True,
+            )
+            boots_full = mra.fit_bootstrap_models(out_sessions)
+
+            out_sessions = mra.make_predictor_matrices(
+                data,
+                t_beg=tb,
+                t_end=te,
+                transform_value=use_nl_val,
+                t1_only=True,
+            )
+            boots_t1 = mra.fit_bootstrap_models(out_sessions)
+
+            self.data[key] = (boots_full, boots_t1)
+
+        boots_full, boots_t1 = self.data[key]
+        null_color = self.params.getcolor("null_corr_color")
+        for i, r in enumerate(regions):
+            r_color = self.get_color_dict()[r]
+            if r == "all":
+                r_list = None
+            else:
+                r_list = (r,)
+            mrv.plot_split_halfs_full(
+                boots_full,
+                pred_func,
+                use_regions=r_list,
+                ax=ax,
+                wi_pt=i,
+                ac_pt=i,
+                wi_d_pt=i,
+                wi_color=r_color,
+                ac_color=null_color,
+                align_func=align_func,
+                zp1='right',
+                zp2='left',
+            )
+        gpl.clean_plot(ax, 0)
+        gpl.clean_plot_bottom(ax, keeplabels=True)
+        gpl.add_hlines(0, ax)
+        ax.set_xticks(np.arange(len(regions)))
+        ax.set_xticklabels(regions)
+
+        if use_nl_val:
+            y_label = "alignment index"
+        else:
+            y_label = "subspace correlation"
+        ax.set_ylabel(y_label)
+        
     def panel_vis(self, force_reload=False):
         key = 'panel_vis'
         ax = self.gss[key][0]
@@ -2070,7 +2140,7 @@ class GeneralTheoryFigure(MultipleRepFigure):
 
 class DecodingCurrentPastFigure(MultipleRepFigure):
     def __init__(self, fig_key="combined_rep_tc_figure", colors=colors, **kwargs):
-        fsize = (8, 4)
+        fsize = (8, 3)
         cf = u.ConfigParserColor()
         cf.read(config_path)
 
@@ -2093,7 +2163,7 @@ class DecodingCurrentPastFigure(MultipleRepFigure):
 
         gs_regions = pu.make_mxn_gridspec(
             self.gs, n_targs, n_times,
-            0, 100, 55, 100, 5, 5
+            0, 100, 50, 100, 5, 5
         )
         axs_regions = self.get_axs(gs_regions, sharey="all", sharex="all")
         gss["panel_regions"] = axs_regions
@@ -2110,7 +2180,12 @@ class DecodingCurrentPastFigure(MultipleRepFigure):
             comb_dict = mraux.load_decoding_runs(ri)
             self.data[key] = comb_dict
         comb_dict = self.data[key]
-        mrv.plot_current_past_dict(comb_dict, plot_regions=(eg_region,), axs=axs)
+        mrv.plot_current_past_dict(
+            comb_dict,
+            plot_regions=(eg_region,),
+            axs=axs,
+            color_dict=self.get_color_dict(),
+        )
 
     def panel_regions(self, reload=False):
         key = "panel_regions"
@@ -2121,7 +2196,11 @@ class DecodingCurrentPastFigure(MultipleRepFigure):
             comb_dict = mraux.load_decoding_runs(ri)
             self.data[key] = comb_dict
         comb_dict = self.data[key]
-        mrv.plot_current_past_regions_dict(comb_dict, axs=axs)
+        mrv.plot_current_past_regions_dict(
+            comb_dict,
+            axs=axs,
+            color_dict=self.get_color_dict(),
+        )
 
         
 class DecodingTCFigure(MultipleRepFigure):

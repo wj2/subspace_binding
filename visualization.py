@@ -639,26 +639,26 @@ def plot_current_past_regions_dict(
         gpl.violinplot(
             [np.mean(dec, axis=1)[..., t_ind]],
             [i - offset/2],
-            color=color_dict.get(region),
+            color=[color_dict.get(region)],
             ax=axs[0, 0],
         )
         gpl.violinplot(
             [np.mean(gen, axis=1)[..., t_ind]],
             [i + offset/2],
-            color=color_dict.get(region),
+            color=[color_dict.get(region)],
             ax=axs[0, 1],
         )
         dec, xs, gen = dec_dict[region][o2_to_o1_key]
         gpl.violinplot(
             [np.mean(dec, axis=1)[..., t_ind]],
             [i - offset/2],
-            color=color_dict.get(region),
+            color=[color_dict.get(region)],
             ax=axs[0, 1],
         )
         gpl.violinplot(
             [np.mean(gen, axis=1)[..., t_ind]],
             [i + offset/2],
-            color=color_dict.get(region),
+            color=[color_dict.get(region)],
             ax=axs[0, 0],
         )
 
@@ -666,19 +666,22 @@ def plot_current_past_regions_dict(
         gpl.violinplot(
             [np.mean(dec, axis=1)[..., t_ind]],
             [i - offset/2],
-            color=color_dict.get(region),
+            color=[color_dict.get(region)],
             ax=axs[1, 1],
         )
         gpl.violinplot(
             [np.mean(gen, axis=1)[..., t_ind]],
             [i + offset/2],
-            color=color_dict.get(region),
+            color=[color_dict.get(region)],
             ax=axs[1, 0],
         )
     for i, j in u.make_array_ind_iterator(axs.shape):
         gpl.add_hlines(.5, axs[i, j])
         gpl.clean_plot(axs[i, j], j)
-
+        if i == axs.shape[0] - 1:
+            axs[i, j].set_xticks(range(len(plot_regions)))
+            axs[i, j].set_xticklabels(plot_regions)
+            
 
 def plot_current_past_dict(
         dec_run_dict,
@@ -725,6 +728,7 @@ def plot_current_past_dict(
             ax=axs[0, 1],
             ls="dashed",
             conf95=True,
+            plot_outline=True,
         )
         dec, xs, gen = dec_dict[region][o2_to_o1_key]
         gpl.plot_trace_werr(
@@ -741,6 +745,7 @@ def plot_current_past_dict(
             ax=axs[0, 0],
             ls="dashed",
             conf95=True,
+            plot_outline=True,
         )
 
         dec, xs, gen = timing_dict[region][o1_time_o2o1_key]
@@ -758,6 +763,7 @@ def plot_current_past_dict(
             ax=axs[1, 0],
             ls="dashed",
             conf95=True,
+            plot_outline=True,
         )
         for i, j in u.make_array_ind_iterator(axs.shape):
             gpl.add_hlines(.5, axs[i, j])
