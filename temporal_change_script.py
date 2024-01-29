@@ -24,6 +24,9 @@ def create_parser():
         "--data_folder",
         default="../data/subspace_binding"
     )
+    parser.add_argument(
+        "--percentile", default=80, type=float
+    )
     parser.add_argument("--jobid", default="0000", type=str)
     
     return parser
@@ -37,8 +40,8 @@ if __name__ == '__main__':
     fig_data = {}
     fig_key = "temp_change"
     tcd = mrf.TemporalChangeDecoding(data=fig_data.get(fig_key))
-    tcd.panel_dec_tc()
-    tcd.panel_dec_region()
+    tcd.panel_dec_tc(train_trl_perc=args.percentile)
+    tcd.panel_dec_region(train_trl_perc=args.percentile)
 
     fig_data[fig_key] = tcd.get_data()
     ks = ("panel_dec_tc", "panel_dec_region")

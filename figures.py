@@ -1454,6 +1454,103 @@ class OfferDecFigure(MultipleRepFigure):
 
         axs_regions[0].set_ylim((yl0, yl1))
 
+class SubsampledNeuronsFigure(MultipleRepFigure):
+    def __init__(self, fig_key="subsample_figure", colors=colors, **kwargs):
+        fsize = (6, 2)
+        cf = u.ConfigParserColor()
+        cf.read(config_path)
+
+        params = cf[fig_key]
+        self.fig_key = fig_key
+        self.saved_coefficients = None
+        super().__init__(fsize, params, colors=colors, **kwargs)
+
+    def make_gss(self):
+        gss = {}
+
+        dist_grids = pu.make_mxn_gridspec(
+            self.gs, 1, 2, 0, 100, 0, 100, 5, 10)
+        dist_axs = self.get_axs(
+            dist_grids, sharey='all', sharex='all', squeeze=True,
+        )
+        gss['panel_dists'] = dist_axs
+        self.gss = gss
+
+    def panel_dists(self):
+        key = "panel_dists"
+        axs = self.gss[key]
+
+        ri = self.params.get("runind")
+        l_color = self.params.getcolor("lin_color")
+        n_color = self.params.getcolor("conj_color")
+        regions = self.params.getlist("use_regions")
+        
+        comb_dict = mraux.load_decoding_runs(ri)
+        mrv.plot_pred_dict(
+            comb_dict["predictions"],
+            axs=axs,
+            clean_bottom=False,
+            l_color=l_color,
+            n_color=n_color,
+            regions=regions,
+        )
+        axs[0].set_ylabel("estimated distance")
+        axs[0].set_title("space")
+        axs[1].set_title("time")
+        
+class TrialNeuronTradeoff(MultipleRepFigure):
+    def __init__(self, fig_key="trial_neuron_figure", colors=colors, **kwargs):
+        fsize = (6, 4)
+        cf = u.ConfigParserColor()
+        cf.read(config_path)
+
+        params = cf[fig_key]
+        self.fig_key = fig_key
+        self.saved_coefficients = None
+        super().__init__(fsize, params, colors=colors, **kwargs)
+
+    def make_gss(self):
+        gss = {}
+
+        n_regions = len(self.params.getlist("use_regions"))
+        trade_grids = pu.make_mxn_gridspec(
+            self.gs, 2, int(n_regions/2), 0, 100, 0, 100, 15, 10)
+        trade_axs = self.get_axs(
+            trade_grids, sharex='all', squeeze=True,
+        )
+        gss['panel_tradeoffs'] = trade_axs.flatten()
+        self.gss = gss
+
+    def panel_tradeoffs(self):
+        key = "panel_tradeoffs"
+        axs = self.gss[key]
+
+        min_line = self.params.getint("required_trials_line")
+        regions = self.params.getlist("use_regions")
+        if self.data.get(key) is None:
+            data = self.get_exper_data()
+            out_dict = {}
+            for region in regions:
+                if region == "all":
+                    r = None
+                else:
+                    r = (region,)
+                out = mra.compute_all_generalization_n_neurs(
+                    data, 0, 500, "subj_ev", regions=r,
+                )
+                out_dict[region] = out
+            self.data[key] = out_dict
+
+        out_dict = self.data[key]
+        cond_key = ('subj_ev_left','subj_ev_right')
+        for i, region in enumerate(regions):
+            thr, n_neurs = out_dict[region][cond_key]
+            axs[i].plot(thr, n_neurs, color=self.get_color_dict()[region])
+            gpl.add_vlines(min_line, axs[i])
+            gpl.clean_plot(axs[i], 0)
+            axs[i].set_xlabel("required trials")
+            axs[i].set_ylabel("available neurons")
+    
 
 class TemporalChangeDecoding(MultipleRepFigure):
     def __init__(self, fig_key="temporal_change_figure", colors=colors, **kwargs):
@@ -1494,6 +1591,7 @@ class TemporalChangeDecoding(MultipleRepFigure):
             winstep,
             var="subj_ev",
             time_accumulate=False,
+            train_trl_perc=None,
             **kwargs,
     ):
         data = self.get_exper_data()
@@ -1505,7 +1603,8 @@ class TemporalChangeDecoding(MultipleRepFigure):
         dead_perc = self.params.getfloat("exclude_middle_percentiles")
         min_trials = self.params.getint("min_trials")
         exclude_safe = self.params.getboolean("exclude_safe")
-        train_trl_perc = self.params.getfloat("train_trial_perc")
+        if train_trl_perc is None:
+            train_trl_perc = self.params.getfloat("train_trial_perc")
         if exclude_safe:
             def mask_func(x): return x < 1
             mask_var = "prob"
@@ -1546,7 +1645,7 @@ class TemporalChangeDecoding(MultipleRepFigure):
             out_dict[region] = out_r
         return out_dict
         
-    def panel_dec_tc(self, recompute=False):
+    def panel_dec_tc(self, recompute=False, **kwargs):
         key = "panel_dec_tc"
         ax = self.gss[key]
 
@@ -1556,7 +1655,7 @@ class TemporalChangeDecoding(MultipleRepFigure):
             winsize = self.params.getfloat("tc_winsize")
             winstep = self.params.getfloat("tc_winstep")
             out = self.temporal_generalization(
-                tbeg, tend, winsize, winstep, time_accumulate=False,
+                tbeg, tend, winsize, winstep, time_accumulate=False, **kwargs,
             )
             self.data[key] = out
         out = self.data[key]
@@ -1565,7 +1664,7 @@ class TemporalChangeDecoding(MultipleRepFigure):
         color = self.get_color_dict()[region]
         mrv.plot_temporal_tc_dict(out[region], ax=ax, color=color)
 
-    def panel_dec_region(self, recompute=False):
+    def panel_dec_region(self, recompute=False, **kwargs,):
         key = "panel_dec_region"
         ax = self.gss[key]
 
@@ -1575,7 +1674,7 @@ class TemporalChangeDecoding(MultipleRepFigure):
             winsize = self.params.getfloat("st_winsize")
             winstep = self.params.getfloat("st_winstep")
             out = self.temporal_generalization(
-                tbeg, tend, winsize, winstep, time_accumulate=True,
+                tbeg, tend, winsize, winstep, time_accumulate=True, **kwargs,
             )
             self.data[key] = out
         out = self.data[key]

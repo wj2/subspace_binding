@@ -440,6 +440,8 @@ def plot_pred_dict(
         offset=.2,
         t_ind=-1,
         res_func=_pred_res_func,
+        regions=None,
+        clean_bottom=True,
         **kwargs,
 ):
     n_plots = len(cond_groups)
@@ -453,24 +455,25 @@ def plot_pred_dict(
     org_dict = _organize_dec_dict(
         dec_dict, cond_groups=cond_groups, res_func=res_func, **kwargs
     )
-    regions = list(org_dict.keys())
-    print(org_dict.keys())
-    for j, (r, conds) in enumerate(org_dict.items()):
+    if regions is None:
+        regions = list(org_dict.keys())
+    for j, r in enumerate(regions):
+        conds = org_dict[r]
         for i, (cond, (dl, dn)) in enumerate(conds.items()):
             if dl is not None:
                 gpl.violinplot(
-                    [dl[:, t_ind]], [j - offset/2], ax=axs[i], color=l_color
+                    [dl[:, t_ind]], [j - offset/2], ax=axs[i], color=[l_color]
                 )
             if dn is not None:
                 gpl.violinplot(
-                    [dn[:, t_ind]], [j + offset/2], ax=axs[i], color=n_color
+                    [dn[:, t_ind]], [j + offset/2], ax=axs[i], color=[n_color]
                 )
     for i in range(len(conds)):
         axs[i].set_xticks(range(len(regions)))
         axs[i].set_xticklabels(regions)
         gpl.clean_plot(axs[i], 0)
         gpl.add_hlines(0, axs[i])
-        if i < len(conds) - 1:
+        if i < len(conds) - 1 and clean_bottom:
             gpl.clean_plot_bottom(axs[i])
 
 
