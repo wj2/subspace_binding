@@ -1368,6 +1368,8 @@ def plot_temporal_tc_dict(out, ax=None, color=None):
         conf95=True,
     )
     gpl.add_hlines(.5, ax)
+    ax.set_ylabel("decoding performance")
+    ax.set_xlabel("time from offer onset (ms)")
 
 
 def plot_temporal_region_dict(
@@ -1400,7 +1402,7 @@ def plot_temporal_region_dict(
     xt = np.arange(len(region_list))
     ax.set_xticks(xt)
     ax.set_xticklabels(region_list, rotation=45)
-
+    ax.set_ylabel("decoding performance")
 
 
 def plot_choice_sensitivity(
