@@ -477,6 +477,57 @@ def plot_pred_dict(
             gpl.clean_plot_bottom(axs[i])
 
 
+def plot_bhv_dec_line(
+        out,
+        conds,
+        min_neurs_range,
+        axs=None,
+        u_rs=None,
+        t_ind=-1,
+        color_dict=None,
+        fwid=1,
+):
+    if color_dict is None:
+        color_dict = {}
+    if u_rs is None:
+        u_rs = np.unique(
+            np.concatenate(list(v[0] for v in out.values()))
+        )
+    if axs is None:
+        f, axs = plt.subplots(
+            len(conds), len(u_rs), figsize=(fwid*len(u_rs), fwid*len(conds))
+        )
+    plot_dict = {}
+    for j, (mn, (rs, out_decbhv)) in enumerate(out.items()):
+        rs = np.array(rs)
+        for i, k in enumerate(conds):
+            plot_dict[k] = {}
+            dec_i, _, _, _, _, _, gen_i = out_decbhv[k]
+            d_t = dec_i[..., t_ind]
+            g_t = gen_i[..., t_ind]
+            for ur in u_rs:
+                mask = ur == rs
+                if sum(mask) > 0:
+                    diffs = d_t[mask] - g_t[mask]
+                    avg_diff = np.mean(diffs, axis=0)
+                    neurs, diffs = plot_dict[k].get(ur, ([], []))
+                    neurs.append(mn)
+                    diffs.append(avg_diff)
+                    plot_dict[k][ur] = (neurs, diffs)
+    for i, (k, cond_dict) in enumerate(plot_dict.items()):
+        for j, (region, (neurs, diffs)) in enumerate(cond_dict.items()):
+            diffs_pt = np.stack(diffs, axis=1)
+            gpl.plot_trace_werr(
+                neurs,
+                diffs_pt,
+                ax=axs[i, j],
+                color=color_dict.get(region),
+                points=True,
+                fill=False,
+            )
+    return axs
+            
+
 def plot_monkey_pred_dict(
         monkey_dict,
         l_color=None,

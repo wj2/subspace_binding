@@ -1686,6 +1686,35 @@ class TemporalChangeDecoding(MultipleRepFigure):
         gpl.clean_plot(ax, 0)            
 
 
+class BehavioralConsistency(MultipleRepFigure):
+    def __init__(self, fig_key="combined_rep_figure", colors=colors, **kwargs):
+        fsize = (8, 6)
+        cf = u.ConfigParserColor()
+        cf.read(config_path)
+
+        params = cf[fig_key]
+        self.fig_key = fig_key
+        self.saved_coefficients = None
+        super().__init__(fsize, params, colors=colors, **kwargs)
+
+    def make_gss(self):
+        gss = {}
+        bhv_gs = pu.make_mxn_gridspec(self.gs, 1, 1, 0, 100, 0, 100, 2, 10)
+        bhv_ax = self.get_axs(bhv_gs, sharex="all", sharey="all")
+        gss['panel_consistency'] = bhv_ax
+        self.gss = gss
+
+    def panel_consistency(self):
+        key = "panel_consistency"
+        ax = self.gss[key]
+        
+        if self.data.get(key) is None:
+            data = self.get_exper_data()
+            corrs = data["subj_ev_chosen"] - data["subj_ev_unchosen"] > 0
+            trl_nums = data["trial_num"]
+
+
+
 class CombinedRepFigure(MultipleRepFigure):
     def __init__(self, fig_key="combined_rep_figure", colors=colors, **kwargs):
         fsize = (8, 6)
@@ -2028,7 +2057,7 @@ class CombinedRepFigure(MultipleRepFigure):
 
     def additional_dec_bhv_sweep(self, force_reload=False, recompute=False):
         key = "additional_dec_bhv_sweep"
-        f, axs = plt.subplots(1, 2)
+        min_neurs_range = np.arange(2, 20, 4)
         if self.data.get(key) is None or recompute:
             min_trials = self.params.getint("min_trials_bhv")
             tbeg = self.params.getint("tbeg")
@@ -2038,7 +2067,6 @@ class CombinedRepFigure(MultipleRepFigure):
             n_folds = self.params.getint("n_folds_bhv")
             test_prop = self.params.getfloat("test_frac_bhv")
 
-            min_neurs_range = np.arange(2, 20, 4)
             data = self.get_experimental_data(force_reload=force_reload)
             out_dict = {}
             for i, mn in enumerate(min_neurs_range):
@@ -2061,7 +2089,6 @@ class CombinedRepFigure(MultipleRepFigure):
                 regions = list(x[0][0] for x in data_filt['neur_regions'])
                 out_dict[mn] = (regions, out_decbhv)
             self.data[key] = out_dict
-
         ks = (
             'left-higher vs right-higher -- no order',
             'first-higher vs second-higher -- no side',
@@ -2070,19 +2097,9 @@ class CombinedRepFigure(MultipleRepFigure):
         regions_all = np.unique(
             np.concatenate(list(v[0] for v in out_dict.values()))
         )
-        
-        minors = np.linspace(-.2, .2, len(out_dict))
-        for j, (mn, (rs, out_decbhv)) in enumerate(out_dict.items()):
-            for i, k in enumerate(ks):
-                dec_i, _, _, _, _, _, gen_i = out_decbhv[k]
-                mrv.plot_bhv_dec_hist(
-                    dec_i,
-                    gen_i,
-                    rs,
-                    ax=axs[i],
-                    u_rs=regions_all,
-                    minor=minors[j],
-                )
+        f, axs = plt.subplots(2, len(regions_all), figsize=(1*len(regions_all), 2))
+
+        mrv.plot_bhv_dec_line(out_dict, ks, min_neurs_range, axs=axs, u_rs=regions_all)
         return f
 
     def panel_dec_bhv(self, force_reload=False, recompute=False):
