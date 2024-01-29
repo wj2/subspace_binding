@@ -1115,8 +1115,12 @@ def _get_percentile_mask(field_data, dead_perc, additional_data=None,
     for i, rd in enumerate(ref_data):
         low_thr = np.percentile(rd, 50 - dead_perc/2)
         high_thr = np.percentile(rd, 50 + dead_perc/2)
-        high_mask = field_data[i] >= high_thr
-        low_mask = field_data[i] <= low_thr
+        if high_thr == low_thr:
+            high_mask = np.zeros_like(field_data[i], dtype=bool)
+            low_mask = np.zeros_like(field_data[i], dtype=bool)
+        else:
+            high_mask = field_data[i] >= high_thr
+            low_mask = field_data[i] <= low_thr
         high_masks.append(high_mask)
         low_masks.append(low_mask)
         if additional_data is not None:
@@ -2817,6 +2821,87 @@ def generalization_n_neurs(data, tbeg, tend, dec_field, gen_field,
         mask_c1 = mask_c1.rs_and(choice_mask)
         mask_c2 = mask_c2.rs_and(choice_mask)
     out = data.neuron_trial_tradeoff(mask_c1, mask_c2, regions=regions)
+    return out
+
+def make_trial_percentile_masks(data, split_perc, trl_field="trial_num", comb_mask=None):
+    trl_nums = data[trl_field]
+    tr_masks = []
+    te_masks = []
+    for i, tr in enumerate(trl_nums):
+        thr_perc = np.percentile(tr, split_perc)
+        tr_m = tr < thr_perc
+        te_m = tr > thr_perc
+        if comb_mask is not None:
+            tr_m = np.logical_and(comb_mask[i], tr_m)
+            te_m = np.logical_and(comb_mask[i], te_m)
+        tr_masks.append(tr_m)
+        te_masks.append(te_m)
+    return tr_masks, te_masks
+
+
+def compute_temporal_generalization(
+        data,
+        tbeg,
+        tend,
+        var,
+        train_trl_perc=90,
+        dec_offer=1,
+        dead_perc=30,
+        winsize=500,
+        tstep=20,
+        pop_resamples=20,
+        kernel='linear',
+        tzf='Offer {} on',
+        min_trials=160,
+        pre_pca=None,
+        shuffle_trials=True,
+        c1_targ=2,
+        c2_targ=3,
+        f1_mask=None,
+        f2_mask=None,
+        use_split_dec=None,
+        correct_only=False,
+        subsample_neurons=None,
+        mask_var=None,
+        mask_func=None,
+        **kwargs,
+):
+    dec_suff = " offer {}".format(dec_offer)
+    vm, = _make_var_masks(data, mask_var, mask_func, dec_suff)
+    field = "{}{}".format(var, dec_suff)
+    tzf = tzf.format(dec_offer)
+    f1_mask, f2_mask = make_trial_percentile_masks(data, train_trl_perc, comb_mask=vm)
+    
+    out = _compute_masks(data, field, field, dead_perc=dead_perc,
+                         use_split_dec=use_split_dec, dec_mask=f1_mask,
+                         gen_mask=f2_mask, c1_targ=c1_targ, c2_targ=c2_targ)
+    mask_c1, mask_c2, gen_mask_c1, gen_mask_c2 = out
+    if correct_only:
+        choice_mask = data['subj_ev_chosen'] - data['subj_ev_unchosen'] > 0
+        mask_c1 = mask_c1.rs_and(choice_mask)
+        mask_c2 = mask_c2.rs_and(choice_mask)
+        gen_mask_c1 = gen_mask_c1.rs_and(choice_mask)
+        gen_mask_c2 = gen_mask_c2.rs_and(choice_mask)
+    out = data.decode_masks(
+        mask_c1,
+        mask_c2,
+        winsize,
+        tbeg,
+        tend,
+        tstep, 
+        pseudo=True,
+        time_zero_field=tzf,
+        min_trials_pseudo=min_trials,
+        resample_pseudo=pop_resamples,
+        ret_pops=False,
+        subsample_neurons=subsample_neurons,
+        shuffle_trials=shuffle_trials,
+        pre_pca=pre_pca,
+        decode_tzf=tzf,
+        decode_m1=gen_mask_c1, 
+        decode_m2=gen_mask_c2,
+        **kwargs
+    )
     return out
 
 

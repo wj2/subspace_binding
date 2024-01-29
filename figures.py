@@ -1455,6 +1455,138 @@ class OfferDecFigure(MultipleRepFigure):
         axs_regions[0].set_ylim((yl0, yl1))
 
 
+class TemporalChangeDecoding(MultipleRepFigure):
+    def __init__(self, fig_key="temporal_change_figure", colors=colors, **kwargs):
+        fsize = (6, 3)
+        cf = u.ConfigParserColor()
+        cf.read(config_path)
+
+        params = cf[fig_key]
+        self.fig_key = fig_key
+        self.saved_coefficients = None
+        super().__init__(fsize, params, colors=colors, **kwargs)
+
+    def make_gss(self):
+        gss = {}
+
+        dec_tc_grid = pu.make_mxn_gridspec(
+            self.gs, 1, 1, 0, 100, 0, 45, 5, 5)
+        dec_tc_ax = self.get_axs(
+            dec_tc_grid, sharey='all', sharex='all',
+        )[0, 0]
+        gss['panel_dec_tc'] = dec_tc_ax
+
+        dec_region_grid = pu.make_mxn_gridspec(
+            self.gs, 1, 1, 0, 100, 55, 100, 5, 5)
+        dec_region_ax = self.get_axs(
+            dec_region_grid, sharey='all', sharex='all',
+        )[0, 0]
+        gss['panel_dec_region'] = dec_region_ax
+        
+        self.gss = gss
+
+
+    def temporal_generalization(
+            self,
+            tbeg,
+            tend,
+            winsize,
+            winstep,
+            var="subj_ev",
+            time_accumulate=False,
+            **kwargs,
+    ):
+        data = self.get_exper_data()
+        prs = self.params.getint("resamples")
+        pca_pre = self.params.getfloat("pca_pre")
+        regions = self.params.getlist("use_regions")
+        correct_only = self.params.getboolean("correct_only")
+        subsample_neurons = self.params.getint("subsample_neurons")
+        dead_perc = self.params.getfloat("exclude_middle_percentiles")
+        min_trials = self.params.getint("min_trials")
+        exclude_safe = self.params.getboolean("exclude_safe")
+        train_trl_perc = self.params.getfloat("train_trial_perc")
+        if exclude_safe:
+            def mask_func(x): return x < 1
+            mask_var = "prob"
+        else:
+            mask_func = None
+            mask_var = None
+        use_split_dec = None
+        dec_less = self.params.getboolean("dec_less")
+        
+        out_dict = {}
+        for region in regions:
+            if region == "all":
+                use_regions = None
+            else:
+                use_regions = (region,)
+            out_r = mra.compute_temporal_generalization(
+                data,
+                tbeg,
+                tend,
+                var,
+                train_trl_perc=train_trl_perc,
+                pop_resamples=prs,
+                winsize=winsize,
+                pre_pca=pca_pre,
+                tstep=winstep,
+                time_accumulate=time_accumulate,
+                regions=use_regions,
+                correct_only=correct_only,
+                subsample_neurons=subsample_neurons,
+                dead_perc=dead_perc,
+                min_trials=min_trials,
+                use_split_dec=use_split_dec,
+                dec_less=dec_less,
+                mask_var=mask_var,
+                mask_func=mask_func,
+                **kwargs,
+            )
+            out_dict[region] = out_r
+        return out_dict
+        
+    def panel_dec_tc(self, recompute=False):
+        key = "panel_dec_tc"
+        ax = self.gss[key]
+
+        if self.data.get(key) is None or recompute:
+            tbeg = self.params.getfloat("tc_tbeg")
+            tend = self.params.getfloat("tc_tend")
+            winsize = self.params.getfloat("tc_winsize")
+            winstep = self.params.getfloat("tc_winstep")
+            out = self.temporal_generalization(
+                tbeg, tend, winsize, winstep, time_accumulate=False,
+            )
+            self.data[key] = out
+        out = self.data[key]
+
+        region = self.params.get("tc_region")
+        color = self.get_color_dict()[region]
+        mrv.plot_temporal_tc_dict(out[region], ax=ax, color=color)
+
+    def panel_dec_region(self, recompute=False):
+        key = "panel_dec_region"
+        ax = self.gss[key]
+
+        if self.data.get(key) is None or recompute:
+            tbeg = self.params.getfloat("st_tbeg")
+            tend = self.params.getfloat("st_tend")
+            winsize = self.params.getfloat("st_winsize")
+            winstep = self.params.getfloat("st_winstep")
+            out = self.temporal_generalization(
+                tbeg, tend, winsize, winstep, time_accumulate=True,
+            )
+            self.data[key] = out
+        out = self.data[key]
+
+        region_list = self.params.getlist("use_regions")
+        mrv.plot_temporal_region_dict(
+            out, color_dict=self.get_color_dict(), ax=ax, region_list=region_list,
+        )
+        gpl.clean_plot(ax, 0)            
+
+
 class CombinedRepFigure(MultipleRepFigure):
     def __init__(self, fig_key="combined_rep_figure", colors=colors, **kwargs):
         fsize = (8, 6)
@@ -1658,6 +1790,7 @@ class CombinedRepFigure(MultipleRepFigure):
         min_trials = self.params.getint("min_trials_conds")
         exclude_safe = self.params.getboolean("exclude_safe")
         normalize_embedding_power = self.params.getboolean("normalize_embedding_power")
+        dead_perc = self.params.getfloat("exclude_middle_percentiles")
 
         if self.data.get(key) is None or recompute:
             exper_data = self.get_experimental_data(force_reload=force_reload)
@@ -1672,6 +1805,7 @@ class CombinedRepFigure(MultipleRepFigure):
                 exper_data,
                 tbeg,
                 tend,
+                dead_perc=dead_perc,
                 winsize=winsize,
                 winstep=winstep,
                 time_accumulate=True,
@@ -1761,14 +1895,20 @@ class CombinedRepFigure(MultipleRepFigure):
         l_color = self.params.getcolor("low_color")
         h_color = self.params.getcolor("high_color")
         colors = (m_color, l_color, h_color)
+        dead_perc = self.params.getfloat("exclude_middle_percentiles")
 
-        corr = mrv.plot_choice_sensitivity(data, ax=ax_psy,
-                                           colors=colors)
-
+        corr_dict, out_dict = mrv.plot_choice_sensitivity(
+            data, dead_perc=dead_perc, ax=ax_psy, colors=colors,
+        )
+        self.data[key] = (corr_dict, out_dict)
         if self.data.get("panel_dists") is None:
             self.panel_dists()
         out_rdm_dict = self.data.get("panel_dists")
-        corr = ((corr[0],), (corr[1],), (corr[2],))
+        corr = (
+            (corr_dict["mixed high-low"],),
+            (corr_dict["low only"],),
+            (corr_dict["high only"],),
+        )
         pairs = (("same order, side-values flip",
                   "order flips, side-values flip",
                   "order flips, side-values same",),
@@ -1777,7 +1917,7 @@ class CombinedRepFigure(MultipleRepFigure):
         for i, pair in enumerate(pairs):
             comb_dists = np.mean(
                 list(out_rdm_dict["all"][2][p] for p in pair),
-                axis=0
+                axis=0,
             )
             dists = np.expand_dims(comb_dists, 1)
             corr_mu = np.mean(corr[i])

@@ -1354,6 +1354,55 @@ def plot_dists_region(out_rdm_dict, use_pairs, regions, c_colors, axs=None,
     ax_a.set_ylim((-.1, .3))
 
 
+def plot_temporal_tc_dict(out, ax=None, color=None):
+    dec, xs = out[:2]
+    gen = out[-1]
+    gpl.plot_trace_werr(xs, np.mean(dec, axis=1), ax=ax, color=color, conf95=True)
+    gpl.plot_trace_werr(
+        xs,
+        np.mean(gen, axis=1),
+        ax=ax,
+        color=color,
+        plot_outline=True,
+        linestyle="dashed",
+        conf95=True,
+    )
+    gpl.add_hlines(.5, ax)
+
+
+def plot_temporal_region_dict(
+        out, ax=None, color_dict=None, region_list=None, offset=.2, t_ind=-1,
+):
+    if color_dict is None:
+        color_dict = None
+    if region_list is None:
+        region_list = list(out.keys())
+    for i, r in enumerate(region_list):
+        v = out[r]
+        dec, xs = v[:2]
+        gen = v[-1]
+        
+        gpl.violinplot(
+            [np.mean(dec, axis=1)[..., t_ind]],
+            [i - offset/2],
+            ax=ax,
+            color=[color_dict.get(r)],
+        )
+        gpl.violinplot(
+            [np.mean(gen, axis=1)[..., t_ind]],
+            [i + offset/2],
+            ax=ax,
+            color=[color_dict.get(r)],
+            plot_outline=True,
+            markersize=3,
+        )
+    gpl.add_hlines(.5, ax)
+    xt = np.arange(len(region_list))
+    ax.set_xticks(xt)
+    ax.set_xticklabels(region_list, rotation=45)
+
+
+
 def plot_choice_sensitivity(
         data,
         dead_perc=30, c1_targ=2,
@@ -1387,16 +1436,20 @@ def plot_choice_sensitivity(
                              use_split_dec=use_split_dec, c1_targ=c1_targ,
                              c2_targ=c2_targ)
     mask_o1_h, mask_o1_l, mask_o2_h, mask_o2_l = out
-
+    
     mask_high = mask_o1_h.rs_and(mask_o2_h)
     mask_low = mask_o1_l.rs_and(mask_o2_l)
+    
     mask_highlow = mask_o1_h.rs_and(mask_o2_l)
     mask_lowhigh = mask_o1_l.rs_and(mask_o2_h)
     mask_lhhl = mask_highlow.rs_or(mask_lowhigh)
+    
     use_masks = (mask_lhhl, mask_low, mask_high)
-    labels = ("mixed", "low only", "high only")
+    labels = ("mixed high-low", "low only", "high only")
+    sep_plot = (True, False, False)
 
-    corr = []
+    corr_dict = {}
+    out_dict = {}
     for i, mask in enumerate(use_masks):
         if mask is None:
             use_choice = data[choice_field]
@@ -1408,21 +1461,43 @@ def plot_choice_sensitivity(
 
             use_diff = o1_val - o2_val
             use_choice = data_mask[choice_field]
+        
         use_choice = np.concatenate(use_choice)
         use_diff = np.concatenate(use_diff)
+        
+        out_dict[labels[i]] = (use_choice, use_diff)
         diff_mask = np.logical_and(min_abs_diff <= np.abs(use_diff),
                                    np.abs(use_diff) <= max_abs_diff)
         use_choice = use_choice[diff_mask]
         use_diff = use_diff[diff_mask]
 
-        corr.append(np.mean((use_choice > .5) == (use_diff > 0)))
+        corr_dict[labels[i]] = np.mean((use_choice > .5) == (use_diff > 0))
 
         xs, ys = gpl.digitize_vars(use_diff, use_choice)
-        gpl.plot_trace_werr(xs, ys, jagged=True, ax=ax, label=labels[i],
-                            color=colors[i])
+        if sep_plot[i]:
+            p_mask = xs > 0
+            gpl.plot_trace_werr(
+                xs[p_mask],
+                ys[p_mask],
+                jagged=True,
+                ax=ax,
+                color=colors[i],
+            )
+            gpl.plot_trace_werr(
+                xs[~p_mask],
+                ys[~p_mask],
+                jagged=True,
+                ax=ax,
+                label=labels[i],
+                color=colors[i],
+            )
+        else:
+            gpl.plot_trace_werr(xs, ys, jagged=True, ax=ax, label=labels[i],
+                                color=colors[i])
     ax.set_xlabel(r'$\Delta$' + ' expected value\n(offer 1 - 2)')
     ax.set_ylabel('p(choose offer 1)')
-    return corr
+    
+    return corr_dict, out_dict
 
 
 def plot_distances(

@@ -428,6 +428,9 @@ def load_fine_data(folder, regions_list=('OFC', 'PCC', 'pgACC', 'vmPFC', 'VS'),
                     session_dict['ev offer 2'] = session_dict[k2]
                     session_frame = pd.DataFrame.from_dict(session_dict)
 
+                    trl_num = np.arange(1, len(session_dict[k2]) + 1)
+                    session_dict["trial_num"] = trl_num
+
                     k1 = 'subjective utlity offer 1 JMF'
                     session_dict['subj_ev offer 1'] = session_dict[k1]
                     k2 = 'subjective utlity offer 2 JMF'
