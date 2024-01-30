@@ -132,6 +132,54 @@ def _subsample_pops(*pops, samp_pops=10):
     return new_pops
 
 
+class MonkeyDistances(MultipleRepFigure):
+    def __init__(
+            self,
+            fig_key="monkey_dist_figure",
+            colors=colors,
+            **kwargs
+    ):
+        fsize = (6, 3)
+        cf = u.ConfigParserColor()
+        cf.read(config_path)
+
+        params = cf[fig_key]
+        self.fig_key = fig_key
+
+        super().__init__(fsize, params, colors=colors, **kwargs)
+
+    def make_gss(self):
+        gss = {}
+
+        n_regions = len(self.regions) - 1
+        region_gs = pu.make_mxn_gridspec(self.gs, 2, n_regions, 0, 100, 0, 100, 8, 3)
+        gss["panel_regions"] = self.get_axs(region_gs, squeeze=False, sharey="all")
+        self.gss = gss
+
+    def panel_regions(self):
+        key = "panel_regions"
+        axs = self.gss[key]
+        if self.data.get(key) is None:
+            runinds = self.params.getlist("runinds")
+            comb_dict = mraux.load_monkey_region_runs(*runinds)
+            self.data[key] = comb_dict
+        comb_dict = self.data[key]
+
+        l_color = self.params.getcolor("lin_color")
+        n_color = self.params.getcolor("conj_color")
+        regions = self.params.getlist("use_regions")[:-1]
+        mrv.plot_monkey_pred_dict(
+            comb_dict,
+            axs=axs,
+            l_color=[l_color],
+            n_color=[n_color],
+            region_list=regions,
+        )
+        for i, j in u.make_array_ind_iterator(axs.shape):
+            if j == 0:
+                axs[i, j].set_ylabel("estimated distance")
+
+
 class SelectivityFigure(MultipleRepFigure):
     def __init__(
             self,
@@ -152,11 +200,9 @@ class SelectivityFigure(MultipleRepFigure):
 
     def get_exper_data(self):
         data = super().get_exper_data()
-        print(len(data.data))
         if self.filter_performance:
             thr = self.params.getfloat("performance_thr")
             data = mraux.filter_low_performance(data, thr)
-        print(len(data.data))
         return data
 
     def make_gss(self):
@@ -1761,6 +1807,7 @@ class BehavioralConsistency(MultipleRepFigure):
                 color=color,
                 lw=.5,
             )
+            axs[k, j].set_title(monkey[:1])
 
         for i, j in u.make_array_ind_iterator(axs.shape):
             gpl.add_hlines(.5, axs[i, j])

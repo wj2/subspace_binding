@@ -60,7 +60,6 @@ def load_monkey_region_runs(
             k_dict = m_dict.get(k, {})
             k_dict.update(v)
             m_dict[k] = k_dict
-        print(m_dict.keys())
         out_dict[gd["monkey"]] = m_dict
     return out_dict
     

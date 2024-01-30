@@ -539,8 +539,12 @@ def plot_monkey_pred_dict(
         excl_all=True,
         single_letter=True,
         comb_func=np.concatenate,
+        title_color_dict=None,
+        region_list=None,
         **kwargs,
 ):
+    if title_color_dict is None:
+        title_color_dict = {}
     r_dict = {}
     for i, (m, comb_dict) in enumerate(monkey_dict.items()):
         org_dict = _organize_dec_dict(
@@ -559,7 +563,10 @@ def plot_monkey_pred_dict(
             figsize=(fwid*len(r_dict), fwid*2),
             sharey=True,
         )
-    for j, (region, m_dict) in enumerate(r_dict.items()):
+    if region_list is None:
+        region_list = list(r_dict.keys())
+    for j, region in enumerate(region_list):
+        m_dict = r_dict[region]
         for k, (monkey, conds) in enumerate(m_dict.items()):
             for i, (cond, (dl, dn)) in enumerate(conds.items()):
                 if dl is not None:
@@ -571,7 +578,9 @@ def plot_monkey_pred_dict(
                         [dn[:, t_ind]], [k + offset/2], ax=axs[i, j], color=n_color
                     )
                 if i == 0:
-                    axs[i, j].set_title(region)
+                    axs[i, j].set_title(
+                        region, color=title_color_dict.get(region, "k")
+                    )
                 if i == len(conds) - 1:
                     axs[i, j].set_xticks(range(len(m_dict)))
                     m_names = list(m_dict.keys())
