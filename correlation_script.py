@@ -31,6 +31,8 @@ def create_parser():
     parser.add_argument("--fig_ind", default=None, type=int)
     default_fit_folder = "../results/subspace_binding/lm_fits/"
     parser.add_argument("--lm_fits", default=default_fit_folder)
+    parser.add_argument("--filter_performance", default=False, action="store_true")
+    parser.add_argument("--correlation_only", default=False, action="store_true")
     return parser
 
 if __name__ == '__main__':
@@ -49,9 +51,13 @@ if __name__ == '__main__':
         plot_figs = figs
 
     if "nominal" in plot_figs:
-        f = mrf.SelectivityFigure(data=fig_data.get('selectivity-nom'))
-        f.panel_eg_neurons()
-        f.panel_model_comp(use_folder=args.lm_fits)
+        f = mrf.SelectivityFigure(
+            data=fig_data.get('selectivity-nom'),
+            filter_performance=args.filter_performance,
+        )
+        if not args.correlation_only:
+            f.panel_eg_neurons()
+            f.panel_model_comp(use_folder=args.lm_fits)
         f.panel_subspace_corr(recompute=False)
         fig_data['selectivity-nom'] = f.get_data()
         f.save(
@@ -60,7 +66,10 @@ if __name__ == '__main__':
         )
     
     if "timecourse" in plot_figs:
-        f = mrf.SelectivityFigure(data=fig_data.get('selectivity-tc'))
+        f = mrf.SelectivityFigure(
+            data=fig_data.get('selectivity-tc'),
+            filter_performance=args.filter_performance,
+        )
         new_f = f.panel_subspace_corr_tc(recompute=False)
         fig_data['selectivity-tc'] = f.get_data()
         fn = 'selectivity-tc_fig_{jobid}.svg'.format(jobid=args.jobid)
@@ -68,7 +77,10 @@ if __name__ == '__main__':
         new_f.savefig(path, bbox_inches="tight", transparent=True)
     
     if "time" in plot_figs:
-        f = mrf.SelectivityFigure(data=fig_data.get('selectivity-time'))
+        f = mrf.SelectivityFigure(
+            data=fig_data.get('selectivity-time'),
+            filter_performance=args.filter_performance,
+        )
         f.panel_subspace_corr_time(recompute=True)
         fig_data['selectivity-time'] = f.get_data()
         f.save(
@@ -77,7 +89,10 @@ if __name__ == '__main__':
         )
 
     if "monkey" in plot_figs:
-        f = mrf.SelectivityFigure(data=fig_data.get('selectivity-monkey'))
+        f = mrf.SelectivityFigure(
+            data=fig_data.get('selectivity-monkey'),
+            filter_performance=args.filter_performance,
+        )
         f.panel_subspace_corr_monkey(recompute=False)
         fig_data['selectivity-monkey'] = f.get_data()
         f.save(
@@ -86,7 +101,10 @@ if __name__ == '__main__':
         )
     
     if "model_mix" in plot_figs:
-        f = mrf.SelectivityFigure(data=fig_data.get('selectivity-mix'))
+        f = mrf.SelectivityFigure(
+            data=fig_data.get('selectivity-mix'),
+            filter_performance=args.filter_performance,
+        )
         f.panel_subspace_corr_model_mix(recompute=False, use_folder=args.lm_fits)
         fig_data['selectivity-mix'] = f.get_data()
         f.save(

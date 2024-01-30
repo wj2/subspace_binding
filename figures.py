@@ -133,15 +133,31 @@ def _subsample_pops(*pops, samp_pops=10):
 
 
 class SelectivityFigure(MultipleRepFigure):
-    def __init__(self, fig_key="selectivity_figure", colors=colors, **kwargs):
+    def __init__(
+            self,
+            fig_key="selectivity_figure",
+            filter_performance=False,
+            colors=colors,
+            **kwargs
+    ):
         fsize = (5, 8)
         cf = u.ConfigParserColor()
         cf.read(config_path)
 
         params = cf[fig_key]
         self.fig_key = fig_key
+        self.filter_performance = filter_performance
 
         super().__init__(fsize, params, colors=colors, **kwargs)
+
+    def get_exper_data(self):
+        data = super().get_exper_data()
+        print(len(data.data))
+        if self.filter_performance:
+            thr = self.params.getfloat("performance_thr")
+            data = mraux.filter_low_performance(data, thr)
+        print(len(data.data))
+        return data
 
     def make_gss(self):
         gss = {}
@@ -160,6 +176,8 @@ class SelectivityFigure(MultipleRepFigure):
         gss["subspace_corr"] = self.get_axs(subspace_corr_gs, squeeze=True)
 
         self.gss = gss
+
+
 
     def panel_eg_neurons(self):
         key = "eg_neurons"
@@ -1687,8 +1705,8 @@ class TemporalChangeDecoding(MultipleRepFigure):
 
 
 class BehavioralConsistency(MultipleRepFigure):
-    def __init__(self, fig_key="combined_rep_figure", colors=colors, **kwargs):
-        fsize = (8, 6)
+    def __init__(self, fig_key="consistency_figure", colors=colors, **kwargs):
+        fsize = (6, 6)
         cf = u.ConfigParserColor()
         cf.read(config_path)
 
@@ -1699,20 +1717,60 @@ class BehavioralConsistency(MultipleRepFigure):
 
     def make_gss(self):
         gss = {}
-        bhv_gs = pu.make_mxn_gridspec(self.gs, 1, 1, 0, 100, 0, 100, 2, 10)
-        bhv_ax = self.get_axs(bhv_gs, sharex="all", sharey="all")
+        n_rows = len(self.get_color_dict()) - 1
+        n_cols = np.max(list(len(v) for k, v in mraux.region_monkey_dict.items()
+                             if k != "all"))
+        bhv_gs = pu.make_mxn_gridspec(self.gs, n_rows, n_cols, 0, 100, 0, 100, 2, 5)
+        bhv_ax = self.get_axs(bhv_gs, sharey="all", sharex="all")
         gss['panel_consistency'] = bhv_ax
         self.gss = gss
 
     def panel_consistency(self):
         key = "panel_consistency"
-        ax = self.gss[key]
+        axs = self.gss[key]
         
+        data = self.get_exper_data()
         if self.data.get(key) is None:
-            data = self.get_exper_data()
             corrs = data["subj_ev_chosen"] - data["subj_ev_unchosen"] > 0
             trl_nums = data["trial_num"]
+            self.data[key] = (corrs, trl_nums)
+        corrs, trl_nums = self.data[key]
 
+        filter_len = self.params.getint("filter_len")
+        perf_thr = self.params.getfloat("performance_thr")
+        use_regions = self.params.getlist("use_regions")
+
+        for i, trl in enumerate(trl_nums):
+            corr = corrs[i]
+            region = data["neur_regions"][i].iloc[0][0]
+            monkey = data["animal"][i]
+            j = mraux.region_monkey_dict[region].index(monkey)
+            k = use_regions.index(region)
+            filt = np.ones(filter_len)/filter_len
+            corr_filt = np.convolve(corr, filt, mode="valid")
+            trl_filt = np.convolve(trl, filt, mode="valid")
+            if np.any(corr_filt < perf_thr):
+                color = "k"
+            else:
+                color = self.get_color_dict()[region]
+            if np.all(corr_filt == 0):
+                corr_filt[:] = np.nan
+            axs[k, j].plot(
+                trl_filt,
+                corr_filt,
+                color=color,
+                lw=.5,
+            )
+
+        for i, j in u.make_array_ind_iterator(axs.shape):
+            gpl.add_hlines(.5, axs[i, j])
+            gpl.clean_plot(axs[i, j], j)
+            if i == len(axs) - 1:
+                axs[i, j].set_xlabel("trial number")
+            else:
+                gpl.clean_plot_bottom(axs[i, j])
+            if j == 0:
+                axs[i, j].set_ylabel("proportion of trials\nwith optimal choice")
 
 
 class CombinedRepFigure(MultipleRepFigure):

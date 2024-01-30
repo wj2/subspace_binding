@@ -31,6 +31,21 @@ region_monkey_dict = {
 }
 
 
+def filter_low_performance(data, perf_thr, filter_len=50):
+    corrs = data["subj_ev_chosen"] - data["subj_ev_unchosen"] > 0
+    trl_nums = data["trial_num"]
+
+    session_mask = np.zeros(len(trl_nums), dtype=bool)
+    for i, trl in enumerate(trl_nums):
+        corr = corrs[i]
+        filt = np.ones(filter_len)/filter_len
+        corr_filt = np.convolve(corr, filt, mode="valid")
+        
+        mask = np.all(corr_filt >= perf_thr)
+        session_mask[i] = mask
+    return data.session_mask(session_mask)
+
+
 def load_monkey_region_runs(
         *runinds,
         folder="multiple_representations/decoding_cluster/",
