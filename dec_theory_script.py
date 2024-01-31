@@ -23,7 +23,6 @@ def create_parser():
         default="../data/subspace_binding"
     )
     parser.add_argument("--include_safe", action="store_true", default=False)
-    parser.add_argument("--correct_only", action="store_true", default=False)
     parser.add_argument("--data_field", default="subj_ev", type=str)
     parser.add_argument("--jobid", default="0000", type=str)
     
@@ -34,10 +33,15 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     args.date = datetime.now()
-    
+
+    if args.include_safe:
+        param_key = "decoding_safe_figure"
+    else:
+        param_key = "decoding_figure"
+
     fig_data = {}
     fig_key = 'decoding'
-    dec_fig = mrf.DecodingFigure(data=fig_data.get(fig_key))
+    dec_fig = mrf.DecodingFigure(data=fig_data.get(fig_key), fig_key=param_key)
     dec_fig.panel_ev_generalization(force_reload=True, force_recompute=True)
     dec_fig.panel_ev_direct_predictions(force_refit=True)
 

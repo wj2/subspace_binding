@@ -2202,9 +2202,27 @@ class CombinedRepFigure(MultipleRepFigure):
         regions_all = np.unique(
             np.concatenate(list(v[0] for v in out_dict.values()))
         )
-        f, axs = plt.subplots(2, len(regions_all), figsize=(1*len(regions_all), 2))
+        f, axs = plt.subplots(
+            2,
+            len(regions_all),
+            figsize=(1*len(regions_all), 2),
+            sharex="all",
+            sharey="all",
+        )
 
-        mrv.plot_bhv_dec_line(out_dict, ks, min_neurs_range, axs=axs, u_rs=regions_all)
+        r_list = self.params.getlist("use_regions")
+        mrv.plot_bhv_dec_line(
+            out_dict,
+            ks,
+            min_neurs_range,
+            axs=axs,
+            u_rs=regions_all,
+            color_dict=self.get_color_dict(),
+            region_list=r_list,
+        )
+        for i, j in u.make_array_ind_iterator(axs.shape):
+            gpl.clean_plot(axs[i, j], j)
+            gpl.add_hlines(0, axs[i, j])
         return f
 
     def panel_dec_bhv(self, force_reload=False, recompute=False):
@@ -2501,7 +2519,7 @@ class GeneralTheoryFigure(MultipleRepFigure):
 
 class DecodingCurrentPastFigure(MultipleRepFigure):
     def __init__(self, fig_key="combined_rep_tc_figure", colors=colors, **kwargs):
-        fsize = (8, 3)
+        fsize = (8, 5)
         cf = u.ConfigParserColor()
         cf.read(config_path)
 
@@ -2513,7 +2531,7 @@ class DecodingCurrentPastFigure(MultipleRepFigure):
     def make_gss(self):
         gss = {}
         n_times = 2
-        n_targs = 2
+        n_targs = 4
 
         gs_tc = pu.make_mxn_gridspec(
             self.gs, n_targs, n_times,
@@ -2561,6 +2579,7 @@ class DecodingCurrentPastFigure(MultipleRepFigure):
             comb_dict,
             axs=axs,
             color_dict=self.get_color_dict(),
+            plot_regions=self.params.getlist("use_regions"),
         )
 
         

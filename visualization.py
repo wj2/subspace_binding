@@ -486,6 +486,7 @@ def plot_bhv_dec_line(
         t_ind=-1,
         color_dict=None,
         fwid=1,
+        region_list=None,
 ):
     if color_dict is None:
         color_dict = {}
@@ -501,21 +502,27 @@ def plot_bhv_dec_line(
     for j, (mn, (rs, out_decbhv)) in enumerate(out.items()):
         rs = np.array(rs)
         for i, k in enumerate(conds):
-            plot_dict[k] = {}
+            pd_k = plot_dict.get(k, {})
             dec_i, _, _, _, _, _, gen_i = out_decbhv[k]
             d_t = dec_i[..., t_ind]
             g_t = gen_i[..., t_ind]
             for ur in u_rs:
                 mask = ur == rs
                 if sum(mask) > 0:
-                    diffs = d_t[mask] - g_t[mask]
-                    avg_diff = np.mean(diffs, axis=0)
-                    neurs, diffs = plot_dict[k].get(ur, ([], []))
+                    diffs_t = d_t[mask] - g_t[mask]
+                    avg_diff = np.mean(diffs_t, axis=0)
+                    neurs, diffs = pd_k.get(ur, ([], []))
                     neurs.append(mn)
                     diffs.append(avg_diff)
-                    plot_dict[k][ur] = (neurs, diffs)
+                    pd_k[ur] = (neurs, diffs)
+            plot_dict[k] = pd_k
     for i, (k, cond_dict) in enumerate(plot_dict.items()):
-        for j, (region, (neurs, diffs)) in enumerate(cond_dict.items()):
+        if region_list is None:
+            region_list = list(cond_dict.keys())
+        else:
+            region_list = list(r for r in region_list if r in cond_dict.keys())
+        for j, region in enumerate(region_list):
+            neurs, diffs = cond_dict[region]
             diffs_pt = np.stack(diffs, axis=1)
             gpl.plot_trace_werr(
                 neurs,
@@ -524,7 +531,14 @@ def plot_bhv_dec_line(
                 color=color_dict.get(region),
                 points=True,
                 fill=False,
+                conf95=True,
             )
+            if i == 0:
+                axs[i, j].set_title(region)
+            if i == len(plot_dict) - 1:
+                axs[i, j].set_xlabel("required pop size")
+            if j == 0:
+                axs[i, j].set_ylabel("projection difference\ncorrect - error")
     return axs
             
 
@@ -750,7 +764,7 @@ def plot_current_past_regions_dict(
         set_xticks=True,
         x_label="",
 ):
-    n_plots = 2
+    n_plots = 4
     n_times = 2
     dec_dict = dec_run_dict["decoding"]
     timing_dict = dec_run_dict["timing"]
@@ -776,19 +790,19 @@ def plot_current_past_regions_dict(
         ("decoding offer 2", "gen from offer 2 to 1"): (
             ('subj_ev offer 2', 'subj_ev offer 1'),
             dec_dict,
-            (axs[0, 1], axs[0, 0]),
+            (axs[1, 1], axs[1, 0]),
         ),
         ("decoding offer 1 during time 2", "gen from time 2 to 1"): (
             (('subj_ev offer 1', 'Offer 2 on'),
              ('subj_ev offer 1', 'Offer 1 on')),
             timing_dict,
-            (axs[1, 1], axs[1, 0]),
+            (axs[2, 1], axs[2, 0]),
         ),
         ("decoding offer 1 during time 1", "gen from time 1 to 2"): (
             (('subj_ev offer 1', 'Offer 1 on'),
              ('subj_ev offer 1', 'Offer 2 on')),
             timing_dict,
-            (axs[1, 0], axs[1, 1]),
+            (axs[3, 0], axs[3, 1]),
         )
     }
     for i, region in enumerate(plot_regions):

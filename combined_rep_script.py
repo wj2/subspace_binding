@@ -36,6 +36,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     args.date = datetime.now()
+
+    if args.include_safe:
+        param_key = "combined_rep_safe_figure"
+    else:
+        param_key = "combined_rep_figure"
     
     fig_data = {}
     panels = (
@@ -49,7 +54,7 @@ if __name__ == '__main__':
         plot_panels = panels
 
     fig_key = "combined_rep"
-    cr_fig = mrf.CombinedRepFigure(data=fig_data.get(fig_key))
+    cr_fig = mrf.CombinedRepFigure(data=fig_data.get(fig_key), fig_key=param_key)
     if "vis" in plot_panels:
         cr_fig.panel_vis()
     
