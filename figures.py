@@ -280,6 +280,7 @@ class SelectivityFigure(MultipleRepFigure):
                 ax=axs[i, 1],
                 side_colors=side_colors,
                 linestyle="dashed",
+                plot_outline=True,
             )
             axs[i, 0].set_title(region)
         use_ind = int(np.floor(axs.shape[0] / 2))
