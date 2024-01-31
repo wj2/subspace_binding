@@ -2820,7 +2820,9 @@ def generalization_n_neurs(data, tbeg, tend, dec_field, gen_field,
         choice_mask = data['subj_ev_chosen'] - data['subj_ev_unchosen'] > 0
         mask_c1 = mask_c1.rs_and(choice_mask)
         mask_c2 = mask_c2.rs_and(choice_mask)
-    out = data.neuron_trial_tradeoff(mask_c1, mask_c2, regions=regions)
+    out = data.neuron_trial_tradeoff(
+        mask_c1, mask_c2, regions=regions, time_zero_field="Offer 1 on",
+    )
     return out
 
 def make_trial_percentile_masks(data, split_perc, trl_field="trial_num", comb_mask=None):
