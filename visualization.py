@@ -314,12 +314,33 @@ def visualize_model_weights(comp_dict, use_regions=None,
     w_arr = np.array(weights)
     if print_props:
         m_types = np.argmax(w_arr, axis=1)
-        print('{}: noise best fit: {:.2f}'.format(use_regions,
-                                              np.mean(m_types == 0)))
-        print('{}: linear best fit: {:.2f}'.format(use_regions,
-                                               np.mean(m_types == 1)))
-        print('{}: interaction best fit: {:.2f}'.format(use_regions,
-                                                    np.mean(m_types == 2)))
+        print('{}: noise best fit: {:.2f}  {}/{} p = {:.3f}'.format(
+            use_regions,
+            np.mean(m_types == 0),
+            np.sum(m_types == 0),
+            len(m_types),
+            sts.binomtest(
+                np.sum(m_types == 0), len(m_types), p=.05, alternative="greater",
+            ).pvalue,
+        ))
+        print('{}: linear best fit: {:.2f}  {}/{} p = {:.3f}'.format(
+            use_regions,
+            np.mean(m_types == 1),
+            np.sum(m_types == 1),
+            len(m_types),
+            sts.binomtest(
+                np.sum(m_types == 1), len(m_types), p=.05, alternative="greater",
+            ).pvalue,
+        ))
+        print('{}: interaction best fit: {:.2f}  {}/{} p = {:.3f}'.format(
+            use_regions,
+            np.mean(m_types == 2),
+            np.sum(m_types == 2),
+            len(m_types),
+            sts.binomtest(
+                np.sum(m_types == 2), len(m_types), p=.05, alternative="greater",
+            ).pvalue,
+        ))
         for um in u_monks:
             mask = monkeys == um
             m_types = np.argmax(w_arr[mask], axis=1)

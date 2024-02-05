@@ -180,6 +180,29 @@ class MonkeyDistances(MultipleRepFigure):
                 axs[i, j].set_ylabel("estimated distance")
 
 
+class NeuronStatsText(MultipleRepFigure):
+    def __init__(
+            self,
+            fig_key="neuron_stats",
+            filter_performance=False,
+            colors=colors,
+            **kwargs
+    ):
+        fsize = (1, 1)
+        cf = u.ConfigParserColor()
+        cf.read(config_path)
+
+        params = cf[fig_key]
+        self.fig_key = fig_key
+        self.filter_performance = filter_performance
+
+        super().__init__(fsize, params, colors=colors, **kwargs)
+
+    def print_stats(self):
+        data = self.get_exper_data()
+        mrv.print_all_region_stats(data)
+    
+
 class SelectivityFigure(MultipleRepFigure):
     def __init__(
             self,
@@ -2613,11 +2636,12 @@ class DecodingTCFigure(MultipleRepFigure):
         key = "panel_dec_tc"
         axs = self.gss[key]
 
+        run_ind = self.params.get("run_ind")
         if self.data.get(key) is None or reload:
-            comb_dict = mraux.load_decoding_runs("11370117")
+            comb_dict = mraux.load_decoding_runs(run_ind)
             self.data[key] = comb_dict
         dec_dict = self.data[key]["decoding"]
-
+        print(self.data[key]["args"])
         mrv.plot_dec_dict(
             dec_dict,
             axs=axs.T,
