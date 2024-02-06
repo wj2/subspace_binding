@@ -1591,28 +1591,32 @@ def _make_factor(v, u_, s):
     return v_align
 
 
-def _compute_null_alignment_index(s1, s2, thresh=1e-10):
+def _compute_null_alignment_index(s1, s2, thresh=1e-10, full_data=None, dim=-1,):
+    dim = -1
     # s1 is a resamps x pts x neurons matrix
     s_comb = np.concatenate((s1, s2), axis=1)
     # cov should be resamps x neuron x neuron matrix
-    ais = np.zeros(len(s_comb))
+    ais = np.zeros((len(s_comb), s_comb.shape[dim]))
     for i, s_i in enumerate(s_comb):
-        n_dims = np.sum(
-            skd.PCA().fit(s1[i]).explained_variance_ratio > thresh
-        )
-        mu = np.mean(s_i, axis=0, keepdims=True)
-        cov = (s_i - mu).T @ (s_i - mu)
-        u_, s, vh = np.linalg.svd(cov)
-        v1_raw = sts.norm(0, 1).rvs((n_dims, s_i.shape[1])).T
-        v2_raw = sts.norm(0, 1).rvs((n_dims, s_i.shape[1])).T
-        v1 = _make_factor(v1_raw, u_, s)
-        v2 = _make_factor(v2_raw, u_, s)
+        for j in range(s_comb.shape[dim]):
+            s_ij = np.take(s_i, j, axis=dim)
+            n_dims = np.sum(
+                skd.PCA().fit(s_ij).explained_variance_ratio_ > thresh
+            )
+            mu = np.mean(s_ij, axis=0, keepdims=True)
+            cov = (s_ij - mu).T @ (s_ij - mu)
+            u_, s, vh = np.linalg.svd(cov)
+            v1_raw = sts.norm(0, 1).rvs((n_dims, s_ij.shape[1])).T
+            v2_raw = sts.norm(0, 1).rvs((n_dims, s_ij.shape[1])).T
+            v1 = _make_factor(v1_raw, u_, s)
+            v2 = _make_factor(v2_raw, u_, s)
         
-        ais[i] = np.trace(v1.T @ v2 @ v2.T @ v1) / n_dims
+            ais[i, j] = np.trace(v1.T @ v2 @ v2.T @ v1) / n_dims
     return ais
 
 
 def _compute_alignment_index(s1, s2, thresh=1e-10, null=False, dim=-1, full_data=None):
+    dim = -1
     ais = np.zeros((len(s1), s1.shape[dim]))
     for i, s1_i in enumerate(s1):
         s2_i = s2[i]
