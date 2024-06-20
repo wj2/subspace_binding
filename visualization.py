@@ -520,10 +520,14 @@ def plot_bhv_dec_line(
             len(conds), len(u_rs), figsize=(fwid*len(u_rs), fwid*len(conds))
         )
     plot_dict = {}
+    pt_dict = {}
+    ttest_dict = {}
     for j, (mn, (rs, out_decbhv)) in enumerate(out.items()):
         rs = np.array(rs)
         for i, k in enumerate(conds):
             pd_k = plot_dict.get(k, {})
+            tt_k = ttest_dict.get(k, {})
+            pt_k = pt_dict.get(k, {})
             dec_i, _, _, _, _, _, gen_i = out_decbhv[k]
             d_t = dec_i[..., t_ind]
             g_t = gen_i[..., t_ind]
@@ -536,6 +540,21 @@ def plot_bhv_dec_line(
                     neurs.append(mn)
                     diffs.append(avg_diff)
                     pd_k[ur] = (neurs, diffs)
+
+                    neurs, diffs = pt_k.get(ur, ([], []))
+                    neurs.extend((mn,)*len(diffs_t))
+                    diffs.extend(np.mean(diffs_t, axis=1))
+                    pt_k[ur] = (neurs, diffs)
+
+                    neurs, pvs = tt_k.get(ur, ([], []))
+                    neurs.append(mn)
+                    res = sts.ttest_1samp(
+                        np.mean(diffs_t, axis=1), 0, alternative="greater",
+                    )
+                    pvs.append(res.pvalue)
+                    tt_k[ur] = (neurs, pvs)
+            pt_dict[k] = pt_k
+            ttest_dict[k] = tt_k
             plot_dict[k] = pd_k
     for i, (k, cond_dict) in enumerate(plot_dict.items()):
         if region_list is None:
@@ -544,6 +563,8 @@ def plot_bhv_dec_line(
             region_list = list(r for r in region_list if r in cond_dict.keys())
         for j, region in enumerate(region_list):
             neurs, diffs = cond_dict[region]
+            n_pt, d_pt = pt_dict[k][region]
+            n_tt, p_tt = ttest_dict[k][region]
             diffs_pt = np.stack(diffs, axis=1)
             gpl.plot_trace_werr(
                 neurs,
@@ -553,6 +574,14 @@ def plot_bhv_dec_line(
                 points=True,
                 fill=False,
                 conf95=True,
+            )
+            axs[i, j].plot(n_pt, d_pt, "o", color=color_dict.get(region))
+
+            n_tt, p_tt = np.array(n_tt), np.array(p_tt)
+            mask = p_tt < .05
+
+            axs[i, j].plot(
+                n_tt[mask], 2.5*np.ones(np.sum(mask)), "+", color=(.7, .7, .7)
             )
             if i == 0:
                 axs[i, j].set_title(region)
@@ -834,11 +863,13 @@ def plot_current_past_regions_dict(
             if print_stats:
                 print(u.make_stat_string(
                     "{}, {}: {{:.2f}} - {{:.2f}}".format(region, dec_text),
-                    dec,
+                    dec[..., t_ind],
+                    perc=90,
                 ))
                 print(u.make_stat_string(
                     "{}, {}: {{:.2f}} - {{:.2f}}".format(region, gen_text),
-                    gen,
+                    gen[..., t_ind],
+                    perc=90,
                 ))
             plot_func(
                 dec,
@@ -1181,7 +1212,6 @@ def plot_linear_continuous(thetas=None, sigmas=None, n_samps=1000, ax=None,
                            cmap="Purples", buff=.3, fwid=1.5):
     if ax is None:
         f, ax = plt.subplots(1, 1, figsize=(fwid, fwid))
-    rng = np.random.default_rng()
     if thetas is None:
         thetas = np.linspace(0, np.pi/2, 100)
     if sigmas is None:
@@ -1195,21 +1225,12 @@ def plot_linear_continuous(thetas=None, sigmas=None, n_samps=1000, ax=None,
     for i, theta in enumerate(thetas):
         a = np.array([[1, 0]]).T
         b = np.array([[np.cos(theta), np.sin(theta)]]).T
-
-        A = np.concatenate((a, b), axis=1)
-
-        stim = rng.normal(size=(n_samps, 2))
-        rep = stim @ A
-        A_lst = np.linalg.lstsq(rep, stim)[0]
         rs[i] = a.T @ b
-
         for j, sig in enumerate(sigmas):
-            # err_theor[i, j] = (1 + (np.cos(theta)/np.sin(theta))**2
-            #                    + 1/np.sin(theta)**2)*sig**2
-            err_theor[i, j] = (2*sig**2)/(np.sin(theta)**2)
-            rep = stim @ A + rng.normal(0, sig, size=(n_samps, 2))
-            dec = rep @ A_lst
-            errs[i, j] = np.mean(np.sum((dec - stim)**2, axis=1))
+            out = mra.linear_inverse_decoding(
+                theta, sig, n_samps=n_samps,
+            )
+            errs[i, j], err_theor[i, j] = out[-2:]
 
     for j, sig in enumerate(sigmas):
         ax.plot(rs, errs[:, j], color=colors[j],
@@ -1375,11 +1396,11 @@ def plot_dist_mat(rdm, labels=None, ax=None, highlights=None,
                 )
                 ax.add_artist(rect)
     if fig is not None:
-        fig.colorbar(m, ax=ax, label='distance', ticks=[0, .1, .2])
+        fig.colorbar(m, ax=ax, label='normalized distance', ticks=[0, np.max(rdm)])
 
 
 def plot_dists_region(out_rdm_dict, use_pairs, regions, c_colors, axs=None,
-                      labels=None):
+                      labels=None, set_ylims=True):
     if axs is None:
         f, axs = plt.subplots(1, 2)
     if labels is None:
@@ -1401,7 +1422,7 @@ def plot_dists_region(out_rdm_dict, use_pairs, regions, c_colors, axs=None,
                        color=(c_colors[i],)*len(ds))
 
     gpl.clean_plot(ax_r, 0)
-    ax_r.set_ylabel('distance')
+    ax_r.set_ylabel('normalized\ndistance')
 
     for (i1, i2) in it.combinations(range(len(use_pairs)), 2):
         p1, p2 = use_pairs[i1], use_pairs[i2]
@@ -1435,7 +1456,7 @@ def plot_dists_region(out_rdm_dict, use_pairs, regions, c_colors, axs=None,
             used_color = p["cmedians"].get_color()
             patch = patches.Patch(color=used_color)
             handles.append(patch)
-        d_interv = u.conf_interval(ds, withmean=True, perc=90)[:, 0]
+        d_interv = u.conf_interval(ds[0], withmean=True, perc=90)[:, 0]
         print(
             "{}: {} interval: {}".format("all", labels[i], d_interv)
         )
@@ -1448,8 +1469,9 @@ def plot_dists_region(out_rdm_dict, use_pairs, regions, c_colors, axs=None,
     ax_a.set_xticklabels(["all"])
     yl0 = ax_a.get_ylim()[0]
     yl1 = ax_r.get_ylim()[1]
-    ax_r.set_ylim((-.05, .1))
-    ax_a.set_ylim((-.1, .3))
+    if set_ylims:
+        ax_r.set_ylim((-.05, .1))
+        ax_a.set_ylim((-.1, .3))
 
 
 def plot_temporal_tc_dict(out, ax=None, color=None):
@@ -1571,7 +1593,8 @@ def plot_choice_sensitivity(
         use_choice = use_choice[diff_mask]
         use_diff = use_diff[diff_mask]
 
-        corr_dict[labels[i]] = np.mean((use_choice > .5) == (use_diff > 0))
+        quant = (use_choice > .5) == (use_diff > 0)
+        corr_dict[labels[i]] = quant
 
         xs, ys = gpl.digitize_vars(use_diff, use_choice)
         if sep_plot[i]:

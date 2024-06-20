@@ -6,6 +6,7 @@ import scipy.io as sio
 import sklearn.linear_model as sklm
 import sklearn.preprocessing as skp
 import matplotlib.pyplot as plt
+import itertools as it
 
 import general.plotting as gpl
 import general.paper_utilities as pu
@@ -1609,13 +1610,22 @@ class TrialNeuronTradeoff(MultipleRepFigure):
         gss['panel_tradeoffs'] = trade_axs.flatten()
         self.gss = gss
 
-    def panel_tradeoffs(self):
+    def panel_tradeoffs(self, recompute=True):
         key = "panel_tradeoffs"
         axs = self.gss[key]
 
         min_line = self.params.getint("required_trials_line")
         regions = self.params.getlist("use_regions")
-        if self.data.get(key) is None:
+        exclude_middle_perc = self.params.getfloat("exclude_middle_percentiles")
+        exclude_safe = self.params.getboolean("exclude_safe")
+        if exclude_safe:
+            mask_var = "prob"
+            def mask_func(x): return x < 1
+        else:
+            mask_func = None
+            mask_var = None
+
+        if self.data.get(key) is None or recompute:
             data = self.get_exper_data()
             out_dict = {}
             for region in regions:
@@ -1624,7 +1634,14 @@ class TrialNeuronTradeoff(MultipleRepFigure):
                 else:
                     r = (region,)
                 out = mra.compute_all_generalization_n_neurs(
-                    data, 0, 500, "subj_ev", regions=r,
+                    data,
+                    0,
+                    500,
+                    "subj_ev",
+                    regions=r,
+                    dead_perc=exclude_middle_perc,
+                    mask_var=mask_var,
+                    mask_func=mask_func,
                 )
                 out_dict[region] = out
             self.data[key] = out_dict
@@ -2057,7 +2074,6 @@ class CombinedRepFigure(MultipleRepFigure):
             else:
                 mask_func = None
                 mask_var = None
-
             out_rdm_dict = mra.estimate_rdm_regions(
                 exper_data,
                 tbeg,
@@ -2098,9 +2114,15 @@ class CombinedRepFigure(MultipleRepFigure):
         mra.print_rdm_factorial_analysis(out_rdm_dict)
         
         ax_r_mb, ax_a_mb = ax_rs[0, 0], ax_alls[0, 0]
-        mrv.plot_dists_region(out_rdm_dict, use_pairs_mb, regions, colors_mb,
-                              axs=(ax_r_mb, ax_a_mb),
-                              labels=use_labels_mb)
+        mrv.plot_dists_region(
+            out_rdm_dict,
+            use_pairs_mb,
+            regions,
+            colors_mb,
+            axs=(ax_r_mb, ax_a_mb),
+            labels=use_labels_mb,
+            set_ylims=not normalize_embedding_power,
+        )
 
         use_pairs_ud = (
             "low",
@@ -2114,9 +2136,15 @@ class CombinedRepFigure(MultipleRepFigure):
         hh_color = self.params.getcolor("high_color")
         colors_ud = (ll_color, hh_color,)
         ax_r_ud, ax_a_ud = ax_rs[1, 0], ax_alls[1, 0]
-        mrv.plot_dists_region(out_rdm_dict, use_pairs_ud, regions, colors_ud,
-                              axs=(ax_r_ud, ax_a_ud),
-                              labels=use_labels_ud)
+        mrv.plot_dists_region(
+            out_rdm_dict,
+            use_pairs_ud,
+            regions,
+            colors_ud,
+            axs=(ax_r_ud, ax_a_ud),
+            labels=use_labels_ud,
+            set_ylims=not normalize_embedding_power,
+        )
 
         highlight_colors = {
             "same order, side-values flip": conf1_color,
@@ -2160,7 +2188,12 @@ class CombinedRepFigure(MultipleRepFigure):
         self.data[key] = (corr_dict, out_dict)
         if self.data.get("panel_dists") is None:
             self.panel_dists()
+
+        normalize_embedding_power = self.params.getboolean("normalize_embedding_power")
+
         out_rdm_dict = self.data.get("panel_dists")
+        if normalize_embedding_power:
+            out_rdm_dict = mra.normalize_embedding_power(out_rdm_dict)
         corr = (
             (corr_dict["mixed high-low"],),
             (corr_dict["low only"],),
@@ -2171,6 +2204,7 @@ class CombinedRepFigure(MultipleRepFigure):
                   "order flips, side-values same",),
                  ("low",),
                  ("high",),)
+        dist_dict = {}
         for i, pair in enumerate(pairs):
             comb_dists = np.mean(
                 list(out_rdm_dict["all"][2][p] for p in pair),
@@ -2180,9 +2214,16 @@ class CombinedRepFigure(MultipleRepFigure):
             corr_mu = np.mean(corr[i])
             gpl.plot_trace_werr([corr_mu], dists, ax=ax_rel, conf95=True,
                                 color=colors[i], fill=False, points=True)
+            dist_dict[pair] = dists
+        for i, j in it.combinations(range(len(pairs)), 2):
+            p1 = pairs[i]
+            p2 = pairs[j]
+            s = "all: diff {} - {}: {{}} - {{}}".format(p1, p2)
+            print(u.make_stat_string(s, dist_dict[p1] - dist_dict[p2]))
+            
         ax_rel.set_xlim([.65, 1])
         ax_rel.set_xlabel('correct response\nrate')
-        ax_rel.set_ylabel('estimated distance')
+        ax_rel.set_ylabel('normalized distance')
 
     def additional_dec_bhv_sweep(self, force_reload=False, recompute=False):
         key = "additional_dec_bhv_sweep"
@@ -2583,6 +2624,7 @@ class DecodingCurrentPastFigure(MultipleRepFigure):
             comb_dict = mraux.load_decoding_runs(ri)
             self.data[key] = comb_dict
         comb_dict = self.data[key]
+        print(comb_dict["args"])
         mrv.plot_current_past_dict(
             comb_dict,
             plot_regions=(eg_region,),
@@ -2599,6 +2641,7 @@ class DecodingCurrentPastFigure(MultipleRepFigure):
             comb_dict = mraux.load_decoding_runs(ri)
             self.data[key] = comb_dict
         comb_dict = self.data[key]
+        print(comb_dict["args"])
         mrv.plot_current_past_regions_dict(
             comb_dict,
             axs=axs,
@@ -2636,9 +2679,9 @@ class DecodingTCFigure(MultipleRepFigure):
         key = "panel_dec_tc"
         axs = self.gss[key]
 
-        run_ind = self.params.get("run_ind")
+        run_ind = self.params.getlist("run_inds")
         if self.data.get(key) is None or reload:
-            comb_dict = mraux.load_decoding_runs(run_ind)
+            comb_dict = mraux.load_decoding_runs(*run_ind)
             self.data[key] = comb_dict
         dec_dict = self.data[key]["decoding"]
         print(self.data[key]["args"])

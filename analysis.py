@@ -40,6 +40,30 @@ visual_regions = ('VISp', 'VISI', 'VISpm', 'VISam', 'VISrl', 'VISa')
 choice_regions = ('MOs', 'PL', 'ILA', 'ORB', 'MOp', 'SSp', 'SCm', 'MRN')
 
 
+
+def linear_inverse_decoding(theta, sig, stim=None, n_samps=1000, distrib=None):
+    rng = np.random.default_rng()
+    a = np.array([[1, 0]]).T
+    b = np.array([[np.cos(theta), np.sin(theta)]]).T
+
+    A = np.concatenate((a, b), axis=1)
+
+    if distrib is None:
+        distrib = rng.normal
+    if stim is None:
+        stim = distrib(size=(n_samps, 2))
+    rep = stim @ A.T
+    A_lst = np.linalg.lstsq(rep, stim)[0]
+    rs = a.T @ b
+
+    err_theor = (2*sig**2)/(np.sin(theta)**2)
+    rep = stim @ A.T + rng.normal(0, sig, size=stim.shape)
+    dec = rep @ A_lst
+    errs = np.mean(np.sum((dec - stim)**2, axis=1))
+    return stim, rep, dec, A, errs, err_theor
+
+
+
 def normalize_embedding_power(rdm_dict, **kwargs):
     rdm_dict_new = {}
     for r, (rdm_arr, rdm_list, ambig_dists, pop_mat) in rdm_dict.items():

@@ -101,15 +101,41 @@ def make_decoding_run_db(
 
 
 def load_decoding_runs(
-        runind,
+        *runinds,
         folder="multiple_representations/decoding_cluster/",
         template="decoding_(m-[a-zA-Z]+_)?(r-)?[A-Za-z]+_{runind}\.pkl",
 ):
-    pattern = template.format(runind=runind)
+    runind_comb = "|".join(list(str(ri) for ri in runinds))
+    runind_re = "({})".format(runind_comb)
+    pattern = template.format(runind=runind_re)
     for i, (_, _, data) in enumerate(u.load_folder_regex_generator(folder, pattern)):
         if i == 0:
             comb_dict = {k: {} for k in data.keys()}
-        list(comb_dict[k].update(v) for k, v in data.items())
+        for k, v_dict in data.items():
+            if k == "args" or len(comb_dict[k]) == 0:
+                comb_dict[k].update(v_dict)
+            else:
+                for r, res in v_dict.items():
+                    curr = comb_dict[k].get(r)
+                    if curr is None:
+                        comb_dict[k][r] = res
+                    else:
+                        for cond, out in res.items():
+                            if len(out) == 3:
+                                d_full, xs, g_full = comb_dict[k][r].get(cond)
+                                d_full = np.concatenate(
+                                    (d_full, out[0]), axis=0
+                                )
+                                g_full = np.concatenate(
+                                    (g_full, out[2]), axis=0
+                                )
+                                comb_dict[k][r][cond] = (d_full, xs, g_full)
+                            elif len(out) == 7:
+                                new_out = {
+                                    quant: np.concatenate((q_full, out[quant]), axis=0)
+                                    for quant, q_full in out.items()
+                                }
+                                comb_dict[k][r][cond] = new_out
     return comb_dict
 
 
