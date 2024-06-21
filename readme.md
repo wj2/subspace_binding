@@ -15,24 +15,23 @@ The main two files for running the analyses are ```figures.py``` and
 ```figures.conf``` -- the former contains all the code and the latter contains 
 all the relevant parameters in a hierarchical configuration file. So, first 
 change any relevant paths or parameters in ```figures.conf``` and then you can
-run, for instance, all the decoding analyses as follows:
+run, for instance, most of the analyses in Figure 3 as follows:
 ```
 import multiple_representations.figures as mrf
 
-dec_fig = mrf.DecodingFigure(data=fig_data.get(fig_key))
-dec_fig.panel_rwd_generalization()
-dec_fig.panel_prob_generalization()
-``` 
-where the first method call does the reward decoding analyses and the second 
-does the probability decoding analyses. To fit coefficients, using the same 
-object, you run:
-```
-dec_fig.panel_rwd_model_prediction(force_recompute=True,
-                                   force_refit=True)
-dec_fig.panel_prob_model_prediction(force_recompute=True,
-                                    force_refit=True)
-```
-and so on. 
+fig_key = 'general_theory'
 
-For the theoretical quantities on coefficients you have fit already, you can
-use the ```TheoryFigure``` and its associated methods. 
+gth_fig = mrf.GeneralTheoryFigure()
+gth_fig.panel_k()
+gth_fig.panel_n()
+gth_fig.panel_snr(recompute=False)
+gth_fig.panel_recovery()
+fig_data[fig_key] = gth_fig.get_data()
+
+
+gth_fig.save(fig_{}.svg'.format(fig_key))
+``` 
+where the ```panel``` methods typically construct a group of panels within the entire figure. This pattern holds for the rest of the figures.
+
+### Generating figures from Johnston and Fine et al. (2023)
+This code underlies all of the figures in Johnston and Fine et al. (2023) https://doi.org/10.48550/arXiv.2309.07766 . The data is separately available on figshare: https://doi.org/10.6084/m9.figshare.26065600 . The instructions above will generate all of the non-schematic and non-behavioral figures shown in the paper. Please feel free to contact [me](wjeffreyjohnston@gmail.com) if you have any questions. 
